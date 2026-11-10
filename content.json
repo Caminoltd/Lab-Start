@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "site": "https://caminoltd.github.io",
   "courses": [
     {
@@ -757,12 +757,67 @@
         "desc": "Removes the old SmartConsole versions from A-GUI and keeps R82. Frees several GB of disk space.",
         "command": "irm https://raw.githubusercontent.com/Don-Paterson/SmartConsoleCleanup/main/run-cleanup.ps1 | iex",
         "note": "Approve the Windows admin (UAC) prompt when it appears. Takes about 2 minutes."
+      }
+    ]
+  },
+  "gaiaHosts": {
+    "default": [
+      {
+        "name": "A-SMS",
+        "ip": "10.1.1.101"
       },
       {
-        "name": "Plink automation",
-        "desc": "Runs Gaia clish commands on several lab hosts at once (unlock database, bash shell, longer inactivity timeout, save config).",
-        "command": "irm https://raw.githubusercontent.com/Don-Paterson/Plink-Automation/main/Automation-Commands-Plink.ps1 | iex",
-        "note": "Opens its own window: tick the hosts and commands, then click Run."
+        "name": "A-GW-01",
+        "ip": "10.1.1.2"
+      },
+      {
+        "name": "A-GW-02",
+        "ip": "10.1.1.3"
+      },
+      {
+        "name": "A-SME",
+        "ip": "10.1.1.130"
+      },
+      {
+        "name": "A-SMS-02",
+        "ip": "10.1.1.111"
+      },
+      {
+        "name": "A-GW-Cluster VIP",
+        "ip": "10.1.1.1",
+        "checked": false
+      },
+      {
+        "name": "Gaia 10.1.1.4",
+        "ip": "10.1.1.4"
+      },
+      {
+        "name": "Gaia 10.1.1.103",
+        "ip": "10.1.1.103"
+      },
+      {
+        "name": "B-GW",
+        "ip": "198.51.100.1"
+      }
+    ]
+  },
+  "gaiaCommands": {
+    "default": [
+      {
+        "text": "lock database override",
+        "type": "clish"
+      },
+      {
+        "text": "set user admin shell /bin/bash",
+        "type": "clish"
+      },
+      {
+        "text": "set inactivity-timeout 720",
+        "type": "clish"
+      },
+      {
+        "text": "save config",
+        "type": "clish"
       }
     ]
   }

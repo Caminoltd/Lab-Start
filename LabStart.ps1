@@ -38,7 +38,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.4.0'
+$Version         = '0.5.0'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -768,13 +768,290 @@ function Invoke-Extra {
 $btnExtraRun.Add_Click({ Invoke-Extra })
 $lvExtras.Add_DoubleClick({ Invoke-Extra })
 
+# ---- Tab 7: Gaia commands -------------------------------------------------------
+$PlinkExe = 'C:\Program Files\PuTTY\plink.exe'
+
+# Runs in a background runspace, one per host. Never blocks the window.
+$GaiaHostWorker = {
+    param([string]$Ip, [string]$Name, [string]$User, [string]$Pw, [string]$Plink, [object[]]$Cmds, $Sync)
+
+    function Log([string]$t) { $Sync.Log.Enqueue("[$Name $Ip] $t") }
+    function Set-HostState([string]$s, [string]$r) { $Sync.State[$Ip] = $s; if ($null -ne $r) { $Sync.Result[$Ip] = $r } }
+    function Q([string]$s) { '"' + ($s -replace '"', '\"') + '"' }
+    function Run-Plink([string]$ArgLine, [string]$Stdin, [int]$TimeoutSec) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Plink; $psi.Arguments = $ArgLine
+        $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+        try { if ($Stdin) { $p.StandardInput.Write($Stdin) }; $p.StandardInput.Close() } catch {}
+        $done = $p.WaitForExit($TimeoutSec * 1000)
+        if (-not $done) { try { $p.Kill() } catch {}; [void]$p.WaitForExit(3000) }
+        $out = ''
+        try { $out = ($o.Result + "`n" + $e.Result).Trim() } catch {}
+        return [pscustomobject]@{ Out = $out; TimedOut = (-not $done); Code = $(if ($done) { $p.ExitCode } else { -1 }) }
+    }
+    function Write-Out([string]$text) {
+        if (-not $text) { return }
+        $lines = @($text -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notmatch 'Keyboard-interactive|Using username|Pre-authentication banner|End of banner' })
+        foreach ($l in ($lines | Select-Object -First 15)) { Log ('    ' + $l.TrimEnd()) }
+        if ($lines.Count -gt 15) { Log "    ... ($($lines.Count - 15) more lines)" }
+    }
+
+    try {
+        Set-HostState 'Checking' ''
+        # 1. Is SSH answering? (switched-off hosts are skipped quickly)
+        $up = $false
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $ar = $tcp.BeginConnect($Ip, 22, $null, $null)
+            $up = $ar.AsyncWaitHandle.WaitOne(2500) -and $tcp.Connected
+            $tcp.Close()
+        } catch {}
+        if (-not $up) { Set-HostState 'Off' 'Not reachable on SSH - switched off?'; Log 'not reachable on SSH - skipped'; return }
+
+        $base = "-ssh -l $User -pw " + (Q $Pw) + " $Ip"
+
+        # 2. Accept the host key once (PuTTY 0.72: answer 'y' to the prompt, no -batch)
+        $r = Run-Plink "$base exit" "y`n" 25
+        if ($r.Out -match 'Access denied|password') { Set-HostState 'Failed' 'Login refused - check the password'; Log 'login refused'; return }
+
+        # 3. Which login shell? bash prints the marker, clish rejects the command
+        $r = Run-Plink ("-batch $base " + (Q 'echo LSMARK_$((6*7))')) $null 25
+        if ($r.TimedOut) { Set-HostState 'Failed' 'No answer over SSH'; Log 'no answer over SSH'; return }
+        if ($r.Out -match 'Access denied') { Set-HostState 'Failed' 'Login refused - check the password'; Log 'login refused'; return }
+        $shell = $(if ($r.Out -match 'LSMARK_42') { 'bash' } else { 'clish' })
+        Log "connected, login shell: $shell"
+        if (@($Cmds).Count -eq 0) { Set-HostState "Up ($shell)" 'Ready'; return }
+
+        Set-HostState "Running ($shell)" ''
+        $ok = 0; $bad = 0; $skip = 0; $restarting = $false
+        foreach ($c in $Cmds) {
+            $type = [string]$c.Type; $text = [string]$c.Text
+
+            if ($type -eq 'localise') {
+                if ($shell -ne 'bash') {
+                    foreach ($pre in 'lock database override', 'set user admin shell /bin/bash') { [void](Run-Plink ("-batch $base " + (Q $pre)) $null 45) }
+                    $shell = 'bash'; Log 'switched the admin shell to bash for the keyboard change'
+                }
+                $f = [IO.Path]::GetTempFileName()
+                [IO.File]::WriteAllText($f, ((@($c.Script) -join "`n") + "`n"))
+                Log "RUN: $text"
+                $r = Run-Plink ("-batch $base -m " + (Q $f)) $null 120
+                Remove-Item $f -Force -ErrorAction SilentlyContinue
+                Write-Out $r.Out
+                if ($r.Out -match 'command not found|CLINFR\d+|NMS[A-Z]{3}\d+') { $bad++; Log 'FAIL: keyboard and time zone' }
+                else { $ok++; $restarting = $true; Log 'OK: keyboard and time zone set - the host is restarting' }
+                $shell = 'clish'
+                continue
+            }
+            if ($type -eq 'expert' -and $shell -ne 'bash') {
+                $skip++; Log "SKIPPED (needs the bash shell - run 'set user admin shell /bin/bash' first): $text"; continue
+            }
+            $remote = $(if ($type -eq 'clish' -and $shell -eq 'bash') { "clish -c '" + ($text -replace "'", "'\''") + "'" } else { $text })
+            $r = Run-Plink ("-batch $base " + (Q $remote)) $null 60
+            $failed = $r.TimedOut -or ($r.Out -match 'CLINFR\d+|NMS[A-Z]{3}\d+|command not found|Invalid command|Error:')
+            if ($failed) { $bad++; Log ("FAIL: $text" + $(if ($r.TimedOut) { ' (timed out)' } else { '' })) } else { $ok++; Log "OK: $text" }
+            Write-Out $r.Out
+            if (-not $failed -and $text -match '^\s*set user admin shell\s+(\S+)') { $shell = $(if ($matches[1] -match 'bash') { 'bash' } else { 'clish' }) }
+        }
+        $summary = "$ok OK" + $(if ($bad) { ", $bad failed" } else { '' }) + $(if ($skip) { ", $skip skipped" } else { '' }) + $(if ($restarting) { ' - restarting' } else { '' })
+        Set-HostState $(if ($bad) { 'Done (errors)' } else { 'Done' }) $summary
+    }
+    catch { Set-HostState 'Failed' $_.Exception.Message; Log ('ERROR: ' + $_.Exception.Message) }
+}
+
+$tabGaia = New-Object System.Windows.Forms.TabPage
+$tabGaia.Text = '7. Gaia commands'
+$tabGaia.Padding = New-Object System.Windows.Forms.Padding(12)
+$tabs.TabPages.Add($tabGaia)
+
+$lblGaiaTop = New-Label 'Run Gaia clish or expert commands on several lab hosts at once. Hosts that are switched off are skipped. Commands run in the order shown.' 0 0 10 36
+$lblGaiaTop.Dock = 'Top'
+
+$pnlGaiaRun = New-Object System.Windows.Forms.Panel
+$pnlGaiaRun.Dock = 'Bottom'; $pnlGaiaRun.Height = 44
+$pnlGaiaRun.Controls.Add((New-Label 'Password:' 0 14 72 22))
+$txtGaiaPw = New-Object System.Windows.Forms.TextBox
+$txtGaiaPw.Location = New-Object System.Drawing.Point(74, 11); $txtGaiaPw.Size = New-Object System.Drawing.Size(140, 26)
+$txtGaiaPw.UseSystemPasswordChar = $true; $txtGaiaPw.Text = $LabPassword
+$btnGaiaCheck = New-Button 'Check hosts' 226 6 130 34
+$btnGaiaRun   = New-Button 'Run on ticked hosts' 364 6 190 34
+$lblGaiaMsg   = New-Label '' 566 14 380 22
+foreach ($ctl in $txtGaiaPw, $btnGaiaCheck, $btnGaiaRun, $lblGaiaMsg) { $pnlGaiaRun.Controls.Add($ctl) }
+
+$txtGaiaLog = New-Object System.Windows.Forms.TextBox
+$txtGaiaLog.Dock = 'Bottom'; $txtGaiaLog.Height = 150
+$txtGaiaLog.Multiline = $true; $txtGaiaLog.ReadOnly = $true; $txtGaiaLog.ScrollBars = 'Vertical'; $txtGaiaLog.Font = $FontMono
+
+$splitGaia = New-Object System.Windows.Forms.SplitContainer
+$splitGaia.Dock = 'Fill'
+
+# Left: hosts
+$lvGaiaHosts = New-Object System.Windows.Forms.ListView
+$lvGaiaHosts.Dock = 'Fill'; $lvGaiaHosts.View = 'Details'; $lvGaiaHosts.CheckBoxes = $true; $lvGaiaHosts.FullRowSelect = $true
+[void]$lvGaiaHosts.Columns.Add('Host', 130); [void]$lvGaiaHosts.Columns.Add('IP', 100)
+[void]$lvGaiaHosts.Columns.Add('Status', 100); [void]$lvGaiaHosts.Columns.Add('Result', 160)
+$pnlGaiaHostBtns = New-Object System.Windows.Forms.Panel
+$pnlGaiaHostBtns.Dock = 'Bottom'; $pnlGaiaHostBtns.Height = 38
+$btnGaiaAll  = New-Button 'All' 0 6 70 28
+$btnGaiaNone = New-Button 'None' 76 6 70 28
+$pnlGaiaHostBtns.Controls.Add($btnGaiaAll); $pnlGaiaHostBtns.Controls.Add($btnGaiaNone)
+$splitGaia.Panel1.Controls.Add($lvGaiaHosts); $splitGaia.Panel1.Controls.Add($pnlGaiaHostBtns)
+$lvGaiaHosts.BringToFront()
+
+# Right: commands
+$clbGaiaCmds = New-Object System.Windows.Forms.CheckedListBox
+$clbGaiaCmds.Dock = 'Fill'; $clbGaiaCmds.CheckOnClick = $true; $clbGaiaCmds.HorizontalScrollbar = $true
+$pnlGaiaAdd = New-Object System.Windows.Forms.Panel
+$pnlGaiaAdd.Dock = 'Bottom'; $pnlGaiaAdd.Height = 38
+$txtGaiaNew = New-Object System.Windows.Forms.TextBox
+$txtGaiaNew.Location = New-Object System.Drawing.Point(0, 8); $txtGaiaNew.Size = New-Object System.Drawing.Size(250, 26)
+$cbGaiaType = New-Object System.Windows.Forms.ComboBox
+$cbGaiaType.DropDownStyle = 'DropDownList'; $cbGaiaType.Location = New-Object System.Drawing.Point(256, 8); $cbGaiaType.Size = New-Object System.Drawing.Size(80, 26)
+[void]$cbGaiaType.Items.Add('clish'); [void]$cbGaiaType.Items.Add('expert'); $cbGaiaType.SelectedIndex = 0
+$btnGaiaAdd = New-Button 'Add' 342 6 60 28
+foreach ($ctl in $txtGaiaNew, $cbGaiaType, $btnGaiaAdd) { $pnlGaiaAdd.Controls.Add($ctl) }
+$splitGaia.Panel2.Controls.Add($clbGaiaCmds); $splitGaia.Panel2.Controls.Add($pnlGaiaAdd)
+$clbGaiaCmds.BringToFront()
+
+$tabGaia.Controls.Add($splitGaia); $tabGaia.Controls.Add($txtGaiaLog); $tabGaia.Controls.Add($pnlGaiaRun); $tabGaia.Controls.Add($lblGaiaTop)
+$splitGaia.BringToFront()
+
+$script:GaiaCmdObjs = New-Object System.Collections.ArrayList
+$script:GaiaJobs = @()
+$script:GaiaPool = $null
+$script:GaiaSync = $null
+
+function Get-GaiaLocaliseItem {
+    $script = @('clish -c ''set timezone Europe / London''', 'dbset keyboard:mapping uk')
+    $label = 'Keyboard and time zone'
+    if ($cbCountry.SelectedIndex -ge 0 -and $cbKeyboard.SelectedIndex -ge 0) {
+        $ch = Get-LocChoice
+        $label = "Keyboard and time zone: $($ch.Country.name), $($ch.Keyboard.name) (expert; restarts the host)"
+        $tz = "$($ch.Country.gaiaRegion) / $($ch.Country.gaiaZone)"
+        $script = @(
+            "clish -c 'set timezone $tz'",
+            "dbset keyboard:mapping $($ch.Keyboard.gaia)",
+            'dbset :save',
+            '/bin/kbd_map_xlate keyboard:mapping < /config/db/initial',
+            "clish -c 'set user admin shell /etc/cli.sh'",
+            "clish -c 'save config'",
+            'rm -f /home/admin/.clish_history',
+            'reboot'
+        )
+    }
+    return [pscustomobject]@{ Text = $label; Type = 'localise'; Script = $script }
+}
+function Fill-Gaia {
+    $lvGaiaHosts.Items.Clear()
+    foreach ($h in (Get-CourseValue $Content.gaiaHosts (Get-SelectedCourse))) {
+        $it = New-Object System.Windows.Forms.ListViewItem([string]$h.name)
+        [void]$it.SubItems.Add([string]$h.ip); [void]$it.SubItems.Add(''); [void]$it.SubItems.Add('')
+        $it.Checked = -not ($h.PSObject.Properties['checked'] -and $h.checked -eq $false)
+        [void]$lvGaiaHosts.Items.Add($it)
+    }
+    $clbGaiaCmds.Items.Clear(); $script:GaiaCmdObjs.Clear()
+    $loc = Get-GaiaLocaliseItem
+    [void]$script:GaiaCmdObjs.Add($loc); [void]$clbGaiaCmds.Items.Add($loc.Text)
+    foreach ($c in (Get-CourseValue $Content.gaiaCommands (Get-SelectedCourse))) {
+        $o = [pscustomobject]@{ Text = [string]$c.text; Type = $(if ($c.type) { [string]$c.type } else { 'clish' }); Script = $null }
+        [void]$script:GaiaCmdObjs.Add($o)
+        [void]$clbGaiaCmds.Items.Add($(if ($o.Type -eq 'expert') { "[expert] $($o.Text)" } else { $o.Text }))
+    }
+}
+function Update-GaiaLocaliseItem {
+    if ($script:GaiaCmdObjs.Count -eq 0) { return }
+    $loc = Get-GaiaLocaliseItem
+    $script:GaiaCmdObjs[0] = $loc
+    $was = $clbGaiaCmds.GetItemChecked(0)
+    $clbGaiaCmds.Items[0] = $loc.Text
+    $clbGaiaCmds.SetItemChecked(0, $was)
+}
+$cbCountry.Add_SelectedIndexChanged({ Update-GaiaLocaliseItem })
+$cbKeyboard.Add_SelectedIndexChanged({ Update-GaiaLocaliseItem })
+
+$btnGaiaAll.Add_Click({ foreach ($it in $lvGaiaHosts.Items) { $it.Checked = $true } })
+$btnGaiaNone.Add_Click({ foreach ($it in $lvGaiaHosts.Items) { $it.Checked = $false } })
+$btnGaiaAdd.Add_Click({
+    $v = $txtGaiaNew.Text.Trim()
+    if (-not $v) { return }
+    $o = [pscustomobject]@{ Text = $v; Type = [string]$cbGaiaType.SelectedItem; Script = $null }
+    [void]$script:GaiaCmdObjs.Add($o)
+    $i = $clbGaiaCmds.Items.Add($(if ($o.Type -eq 'expert') { "[expert] $v" } else { $v }))
+    $clbGaiaCmds.SetItemChecked($i, $true)
+    $txtGaiaNew.Clear()
+})
+
+$gaiaTimer = New-Object System.Windows.Forms.Timer
+$gaiaTimer.Interval = 500
+$gaiaTimer.Add_Tick({
+    $s = $script:GaiaSync
+    if (-not $s) { return }
+    $line = $null
+    $sb = New-Object System.Text.StringBuilder
+    while ($s.Log.TryDequeue([ref]$line)) { [void]$sb.AppendLine($line) }
+    if ($sb.Length -gt 0) { $txtGaiaLog.AppendText($sb.ToString()) }
+    foreach ($it in $lvGaiaHosts.Items) {
+        $ip = $it.SubItems[1].Text
+        if ($s.State.ContainsKey($ip)) { $it.SubItems[2].Text = [string]$s.State[$ip] }
+        if ($s.Result.ContainsKey($ip)) { $it.SubItems[3].Text = [string]$s.Result[$ip] }
+    }
+    if (@($script:GaiaJobs | Where-Object { -not $_.Handle.IsCompleted }).Count -eq 0) {
+        $gaiaTimer.Stop()
+        foreach ($j in $script:GaiaJobs) { try { [void]$j.PS.EndInvoke($j.Handle) } catch {}; $j.PS.Dispose() }
+        $script:GaiaJobs = @()
+        if ($script:GaiaPool) { $script:GaiaPool.Close(); $script:GaiaPool = $null }
+        while ($s.Log.TryDequeue([ref]$line)) { $txtGaiaLog.AppendText($line + "`r`n") }
+        $txtGaiaLog.AppendText("--- finished $(Get-Date -Format 'HH:mm:ss') ---`r`n")
+        $lblGaiaMsg.Text = 'Finished. See the Result column and the log.'
+        $btnGaiaRun.Enabled = $true; $btnGaiaCheck.Enabled = $true
+    }
+})
+
+function Start-GaiaRun([bool]$CheckOnly) {
+    if (-not (Test-Path $PlinkExe)) { [void][System.Windows.Forms.MessageBox]::Show("plink.exe was not found at $PlinkExe", 'Gaia commands'); return }
+    $hosts = @($lvGaiaHosts.Items | Where-Object { $_.Checked })
+    if ($hosts.Count -eq 0) { $lblGaiaMsg.Text = 'Tick at least one host.'; return }
+    $cmds = @()
+    if (-not $CheckOnly) {
+        for ($i = 0; $i -lt $clbGaiaCmds.Items.Count; $i++) { if ($clbGaiaCmds.GetItemChecked($i)) { $cmds += $script:GaiaCmdObjs[$i] } }
+        if ($cmds.Count -eq 0) { $lblGaiaMsg.Text = 'Tick at least one command.'; return }
+        $msg = "Run on $($hosts.Count) host(s):`r`n`r`n" + (($cmds | ForEach-Object { '  ' + $_.Text }) -join "`r`n")
+        if (@($cmds | Where-Object { $_.Type -eq 'localise' }).Count) { $msg += "`r`n`r`nThe keyboard and time zone item restarts each host it runs on." }
+        if ([System.Windows.Forms.MessageBox]::Show($msg, 'Gaia commands', 'YesNo', 'Question') -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    }
+    $script:GaiaSync = [hashtable]::Synchronized(@{
+        Log = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+        State = [hashtable]::Synchronized(@{}); Result = [hashtable]::Synchronized(@{})
+    })
+    foreach ($it in $hosts) { $it.SubItems[2].Text = 'Queued'; $it.SubItems[3].Text = '' }
+    $txtGaiaLog.AppendText("--- $(if ($CheckOnly) { 'checking' } else { 'running' }) on $($hosts.Count) host(s), $(Get-Date -Format 'HH:mm:ss') ---`r`n")
+    $script:GaiaPool = [runspacefactory]::CreateRunspacePool(1, 6)
+    $script:GaiaPool.Open()
+    $script:GaiaJobs = @()
+    foreach ($it in $hosts) {
+        $ps = [powershell]::Create()
+        $ps.RunspacePool = $script:GaiaPool
+        [void]$ps.AddScript($GaiaHostWorker).AddArgument($it.SubItems[1].Text).AddArgument($it.Text).AddArgument('admin').AddArgument($txtGaiaPw.Text).AddArgument($PlinkExe).AddArgument([object[]]$cmds).AddArgument($script:GaiaSync)
+        $script:GaiaJobs += [pscustomobject]@{ PS = $ps; Handle = $ps.BeginInvoke() }
+    }
+    $btnGaiaRun.Enabled = $false; $btnGaiaCheck.Enabled = $false
+    $lblGaiaMsg.Text = 'Working... the window stays usable.'
+    $gaiaTimer.Start()
+}
+$btnGaiaCheck.Add_Click({ Start-GaiaRun $true })
+$btnGaiaRun.Add_Click({ Start-GaiaRun $false })
+$form.Add_FormClosing({ $gaiaTimer.Stop(); foreach ($j in $script:GaiaJobs) { try { $j.PS.Stop() } catch {} } })
+
 # ---- Wiring -----------------------------------------------------------------
-function Fill-All { Fill-Courses; Fill-Localise; Fill-Checklist; Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras }
+function Fill-All { Fill-Courses; Fill-Localise; Fill-Checklist; Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras; Fill-Gaia }
 $cbCourse.Add_SelectedIndexChanged({
     if ($script:FillingCourses) { return }
     $code = Get-SelectedCourse
     if ($code) { try { Set-Content -Path $CourseFile -Value $code -Encoding ASCII } catch {} }
-    Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras
+    Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras; Fill-Gaia
 })
 $btnRefresh.Add_Click({ Set-Busy $true; $script:Content = Get-LabContent; Fill-All; Set-Busy $false })
 
@@ -797,6 +1074,7 @@ $tabLoc.Add_Resize({ Fit-Tabs }); $tabChk.Add_Resize({ Fit-Tabs }); $form.Add_Re
 
 $form.Add_Shown({
     Fit-Tabs
+    try { $splitGaia.SplitterDistance = [int]($splitGaia.Width * 0.52) } catch {}
     $form.TopMost = $true; $form.Activate(); $form.TopMost = $false
     Show-LocaliseStatus -Quiet $true
 })

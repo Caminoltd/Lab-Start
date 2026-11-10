@@ -19,6 +19,8 @@ This opens the window and adds a **Lab Start** shortcut on the desktop, so stude
 | 3. Credentials & IPs | Logins and IPs for the chosen course; double-click a cell to copy it. Button opens the course's credentials PDF. |
 | 4. Check Point Tools | The chosen course's documents, then the main tools. "Show everything" lists the rest of the folder. |
 | 5. Lab notes | Notes for the chosen course, plus buttons for the course page (lab notes, topology) and the checklist on caminoltd.github.io. |
+| 6. Extras | Optional tools (MobaXterm setup, SmartConsole cleanup, ...) from `extras` in content.json. Each runs in its own PowerShell window. |
+| 7. Gaia commands | Runs clish or expert commands on ticked Gaia hosts in parallel via plink. Skips hosts that are off (port 22 check), accepts host keys, detects the login shell (clish commands are wrapped in `clish -c` on bash hosts), one SSH call per command with a timeout, so nothing hangs. Built-in item: keyboard and time zone for the country chosen in tab 1 (the original `changes.ps1` Gaia sequence; restarts the host), for VMs that were off when Localise ran. Hosts and commands: `gaiaHosts` / `gaiaCommands` in content.json. |
 
 The student chooses their course at the top right (remembered on A-GUI). Every course uses the same A-GUI image, so the course choice decides what tabs 3 to 5 show.
 
@@ -33,6 +35,8 @@ Tabs 2 to 5 are filled from **`content.json`** (cached on A-GUI in case the down
 
 ## Status
 
+- **v0.5.0**: tab 7 Gaia commands (replaces Plink-Automation, which hung on interactive clish sessions). Tested 10 Nov 2026 on clish and bash hosts.
+- **v0.4.0**: tab 6 Extras.
 - **v0.3.0**: 31 countries plus a keyboard choice (values checked against the original `changes.ps1` menus). The runner adds a `custom` case to the SkillableMods preset block and calls `changes.ps1 'RDP-HOST' 'custom' <winKbd> <gaiaKbd> <winTz> <region> <zone>`. `go.ps1` pins the latest commit so new versions load at once. Tested in a CCSE lab on 10 Nov 2026 (Ireland): Gaia hosts set to Europe/Dublin, A-GUI restarted and Lab Start reopened by itself showing Done.
 - **v0.2.0**: course selector; per-course credentials (CCSA, CCSE; others use `default`); tools tab filtered; notes link to the course pages; auto-reopen after the restart.
 - **v0.1.0**: UK only.
