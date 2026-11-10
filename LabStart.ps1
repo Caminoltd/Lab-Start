@@ -26,7 +26,18 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version         = '0.1.0'
+
+# When launched from PowerShell 7, this Windows PowerShell 5.1 process inherits PS7 module paths and
+# then fails to load core modules (e.g. ConvertTo-SecureString). Keep only the 5.1 paths and reload.
+if ($PSVersionTable.PSVersion.Major -lt 6) {
+    $env:PSModulePath = (@($env:PSModulePath -split ';') | Where-Object { $_ -and $_ -notmatch '(^|\\)PowerShell\\' }) -join ';'
+    $sysModules = Join-Path $PSHOME 'Modules'
+    if (($env:PSModulePath -split ';') -notcontains $sysModules) { $env:PSModulePath = "$env:PSModulePath;$sysModules" }
+    foreach ($m in 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management') {
+        Import-Module $m -ErrorAction SilentlyContinue
+    }
+}
+$Version         = '0.1.2'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/main'
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -304,6 +315,7 @@ function Show-LocaliseStatus([bool]$Quiet = $false) {
     catch {
         if (-not $Quiet) { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkRed; $lblLocStatus.Text = (Get-FriendlyRemoteError $_) }
         else { $lblLocStatus.ForeColor = [System.Drawing.Color]::Gray; $lblLocStatus.Text = 'Status not available yet (RDP-HOST did not answer). Click Check status to try again.' }
+        $txtLocLog.Text = "Could not reach RDP-HOST ($(Get-RdpHostTarget)):`r`n`r`n" + (Get-FriendlyRemoteError $_) + "`r`n`r`nDetail: " + $_.Exception.Message
     }
     finally { Set-Busy $false }
 }
