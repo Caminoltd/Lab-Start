@@ -33,8 +33,9 @@ Tabs 2 to 5 are filled from **`content.json`** (cached on A-GUI in case the down
 
 ## Status
 
+- **v0.3.0**: 31 countries plus a keyboard choice (values checked against the original `changes.ps1` menus). The runner adds a `custom` case to the SkillableMods preset block and calls `changes.ps1 'RDP-HOST' 'custom' <winKbd> <gaiaKbd> <winTz> <region> <zone>`. `go.ps1` pins the latest commit so new versions load at once. Tested in a CCSE lab on 10 Nov 2026 (Ireland): Gaia hosts set to Europe/Dublin, A-GUI restarted and Lab Start reopened by itself showing Done.
 - **v0.2.0**: course selector; per-course credentials (CCSA, CCSE; others use `default`); tools tab filtered; notes link to the course pages; auto-reopen after the restart.
-- **v0.1.0**: UK only. Other countries need a generic preset in the patcher. Next step: get a copy of the original `C:\scripts\changes.ps1` (the `.bak-*` file on RDP-HOST) to check which keyboard, timezone and Gaia values its menus accept.
+- **v0.1.0**: UK only.
 - `content.json` holds only values confirmed so far. Add per-course credentials, IPs and lab notes.
 
 ## Test plan for a fresh lab

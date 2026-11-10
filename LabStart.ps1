@@ -22,7 +22,8 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$NoContentDownload
+    [switch]$NoContentDownload,
+    [string]$Ref = 'main'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,8 +38,8 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.2.0'
-$RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/main'
+$Version         = '0.3.0'
+$RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
 $LabUser         = 'Admin'
@@ -77,11 +78,11 @@ function Get-LabContent {
             } catch { $json = $null; if ($try -lt 2) { Start-Sleep -Seconds 3 } }
         }
     }
+    $local = $(if ($PSScriptRoot) { Join-Path $PSScriptRoot 'content.json' } else { $null })
+    # -NoContentDownload (testing): prefer the content.json next to the script
+    if (-not $json -and $NoContentDownload -and $local -and (Test-Path $local)) { $json = Get-Content -Raw -Path $local }
     if (-not $json -and (Test-Path $cache)) { $json = Get-Content -Raw -Path $cache }
-    if (-not $json) {
-        $local = Join-Path $PSScriptRoot 'content.json'
-        if ($PSScriptRoot -and (Test-Path $local)) { $json = Get-Content -Raw -Path $local }
-    }
+    if (-not $json -and $local -and (Test-Path $local)) { $json = Get-Content -Raw -Path $local }
     if (-not $json) { $json = $FallbackContentJson }
     return ($json | ConvertFrom-Json)
 }
@@ -151,8 +152,45 @@ try {
     & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $patcher -Path 'C:\scripts' 2>&1 | ForEach-Object { Write-Log "$_" }
     if ($LASTEXITCODE -ne 0) { throw "The patcher stopped with exit code $LASTEXITCODE" }
 
-    Set-Status 'running' 'Applying keyboard and timezone to all lab VMs (the Windows VMs restart)'
-    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& 'C:\scripts\changes.ps1' 'RDP-HOST' '$Preset'" 2>&1 | ForEach-Object { Write-Log "$_" }
+    # Preset is either a plain name ('uk') or 'custom|winKeyboard|gaiaKeyboard|winTimezone|gaiaRegion|gaiaZone|label'
+    $parts = @($Preset -split '\|')
+    if ($parts.Count -ge 6) {
+        Set-Status 'running' 'Adding the country choice to changes.ps1'
+        $cs = 'C:\scripts\changes.ps1'
+        $code = Get-Content -Raw -Path $cs
+        if ($code -notmatch 'LabStart custom preset') {
+            $sw = 'switch ($Preset) {'
+            $df = "    default { `$Preset = '' }"
+            if ($code.IndexOf($sw) -lt 0 -or $code.IndexOf($df) -lt 0) { throw 'changes.ps1 does not have the expected SkillableMods preset block' }
+            $custom = @"
+    'custom' {
+        # LabStart custom preset
+        `$WindowsLanguageTag = `$LSArgs[2]
+        `$GAIALanguageTag    = `$LSArgs[3]
+        `$WindowsTimezone    = `$LSArgs[4]
+        `$GAIAregion         = `$LSArgs[5]
+        `$GAIAzone           = `$LSArgs[6]
+        Write-Host ''
+        Write-Host "      [Lab Start] Keyboard `$WindowsLanguageTag / `$GAIALanguageTag, time zone `$WindowsTimezone / `$GAIAregion/`$GAIAzone - skipping menus." -ForegroundColor Green
+        Write-Host ''
+    }
+"@
+            $i = $code.IndexOf($sw)
+            $code = $code.Substring(0, $i) + "`$LSArgs = @(`$args)`r`n" + $code.Substring($i)
+            $j = $code.IndexOf($df)
+            $code = $code.Substring(0, $j) + $custom + $code.Substring($j)
+            Set-Content -Path $cs -Value $code -Encoding UTF8
+            Write-Log 'Added the Lab Start custom preset to changes.ps1'
+        }
+        $label = $(if ($parts.Count -ge 7) { $parts[6] } else { 'custom' })
+        Set-Status 'running' "Applying $label to all lab VMs (the Windows VMs restart)"
+        $cmd = "& 'C:\scripts\changes.ps1' 'RDP-HOST' 'custom' '{0}' '{1}' '{2}' '{3}' '{4}'" -f $parts[1], $parts[2], $parts[3], $parts[4], $parts[5]
+    } else {
+        Set-Status 'running' 'Applying keyboard and timezone to all lab VMs (the Windows VMs restart)'
+        $cmd = "& 'C:\scripts\changes.ps1' 'RDP-HOST' '$Preset'"
+    }
+    Write-Log "Running: $cmd"
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $cmd 2>&1 | ForEach-Object { Write-Log "$_" }
     Set-Status 'done' ('Finished at ' + (Get-Date -Format 'HH:mm'))
 }
 catch {
@@ -165,7 +203,7 @@ catch {
     [pscustomobject]@{ state = 'starting'; preset = $Preset; detail = 'Starting on RDP-HOST'; time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
         ConvertTo-Json | Set-Content -Path (Join-Path $dir 'status.json') -Encoding UTF8
 
-    $arg      = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Preset {1}' -f (Join-Path $dir 'run-localise.ps1'), $Preset
+    $arg      = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Preset "{1}"' -f (Join-Path $dir 'run-localise.ps1'), $Preset
     $action   = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDirectory 'C:\scripts'
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName 'LabStart-Localise' -Action $action -Settings $settings `
@@ -253,13 +291,14 @@ $form.MinimumSize = New-Object System.Drawing.Size(900, 600)
 $form.StartPosition = 'CenterScreen'
 $form.Font = $FontBody
 
-$header = New-Label 'Camino Lab Start' 16 10 600 32 $FontTitle
+$header = New-Label 'Camino Lab Start' 16 10 400 32 $FontTitle
 $form.Controls.Add($header)
 $sub = New-Label 'Your lab companion: set up the lab, then find the logins, IP addresses, course documents and lab notes for your course.' 18 42 960 22
 $form.Controls.Add($sub)
 
 $CourseFile = Join-Path $StateDir 'course.txt'
-$lblCourse = New-Label 'Your course:' 580 14 100 24 $FontBold
+$lblCourse = New-Label 'Your course:' 540 12 134 28 $FontBold
+$lblCourse.TextAlign = 'MiddleRight'
 $lblCourse.Anchor = 'Top, Right'
 $form.Controls.Add($lblCourse)
 $cbCourse = New-Object System.Windows.Forms.ComboBox
@@ -317,24 +356,70 @@ $tabLoc.Controls.Add((New-Label 'Country:' 16 56 80 24 $FontBold))
 $cbCountry = New-Object System.Windows.Forms.ComboBox
 $cbCountry.DropDownStyle = 'DropDownList'
 $cbCountry.Location = New-Object System.Drawing.Point(100, 52)
-$cbCountry.Size = New-Object System.Drawing.Size(420, 28)
-[void]$cbCountry.Items.Add('United Kingdom - UK keyboard, London time')
-$cbCountry.SelectedIndex = 0
+$cbCountry.Size = New-Object System.Drawing.Size(320, 28)
+$cbCountry.MaxDropDownItems = 20
 $tabLoc.Controls.Add($cbCountry)
-$tabLoc.Controls.Add((New-Label 'More countries are coming. Until then, other countries use C:\scripts\changes.cmd on RDP-HOST.' 100 84 840 22))
+$tabLoc.Controls.Add((New-Label 'Keyboard:' 16 92 80 24 $FontBold))
+$cbKeyboard = New-Object System.Windows.Forms.ComboBox
+$cbKeyboard.DropDownStyle = 'DropDownList'
+$cbKeyboard.Location = New-Object System.Drawing.Point(100, 88)
+$cbKeyboard.Size = New-Object System.Drawing.Size(320, 28)
+$cbKeyboard.MaxDropDownItems = 20
+$tabLoc.Controls.Add($cbKeyboard)
+$lblLocSummary = New-Label '' 100 122 840 22
+$lblLocSummary.ForeColor = [System.Drawing.Color]::DimGray
+$tabLoc.Controls.Add($lblLocSummary)
 
-$btnApply  = New-Button 'Apply to all lab VMs' 100 116 200 36
-$btnStatus = New-Button 'Check status' 312 116 150 36
+# Built-in UK values in case content.json has no country list
+$LocDefault = @{ keyboards = @([pscustomobject]@{ name = 'English (United Kingdom)'; windows = 'en-GB'; gaia = 'uk' });
+                 countries = @([pscustomobject]@{ name = 'United Kingdom'; keyboard = 'en-GB'; windowsTimezone = 'GMT Standard Time'; gaiaRegion = 'Europe'; gaiaZone = 'London' }) }
+$CountryFile = Join-Path $StateDir 'country.txt'
+function Get-LocKeyboards { if ($Content.localise -and $Content.localise.keyboards) { return @($Content.localise.keyboards) } else { return $LocDefault.keyboards } }
+function Get-LocCountries { if ($Content.localise -and $Content.localise.countries) { return @($Content.localise.countries) } else { return $LocDefault.countries } }
+function Fill-Localise {
+    $cbCountry.Items.Clear(); $cbKeyboard.Items.Clear()
+    foreach ($k in (Get-LocKeyboards)) { [void]$cbKeyboard.Items.Add($k.name) }
+    $saved = $null
+    if (Test-Path $CountryFile) { $saved = (Get-Content -Raw -Path $CountryFile).Trim() }
+    $sel = 0; $i = 0
+    foreach ($c in (Get-LocCountries)) {
+        [void]$cbCountry.Items.Add($c.name)
+        if ($saved -and $c.name -eq $saved) { $sel = $i } elseif (-not $saved -and $c.name -eq 'United Kingdom') { $sel = $i }
+        $i++
+    }
+    if ($cbCountry.Items.Count -gt 0) { $cbCountry.SelectedIndex = $sel }
+}
+function Get-LocChoice {
+    $c = @(Get-LocCountries)[$cbCountry.SelectedIndex]
+    $k = @(Get-LocKeyboards)[$cbKeyboard.SelectedIndex]
+    return [pscustomobject]@{ Country = $c; Keyboard = $k }
+}
+function Update-LocSummary {
+    if ($cbCountry.SelectedIndex -lt 0 -or $cbKeyboard.SelectedIndex -lt 0) { $lblLocSummary.Text = ''; return }
+    $ch = Get-LocChoice
+    $lblLocSummary.Text = "Windows time zone: $($ch.Country.windowsTimezone)    |    Gaia time zone: $($ch.Country.gaiaRegion) / $($ch.Country.gaiaZone)"
+}
+$cbCountry.Add_SelectedIndexChanged({
+    if ($cbCountry.SelectedIndex -lt 0) { return }
+    $c = @(Get-LocCountries)[$cbCountry.SelectedIndex]
+    $ks = @(Get-LocKeyboards)
+    for ($i = 0; $i -lt $ks.Count; $i++) { if ($ks[$i].windows -eq $c.keyboard) { $cbKeyboard.SelectedIndex = $i; break } }
+    Update-LocSummary
+})
+$cbKeyboard.Add_SelectedIndexChanged({ Update-LocSummary })
+
+$btnApply  = New-Button 'Apply to all lab VMs' 100 150 200 36
+$btnStatus = New-Button 'Check status' 312 150 150 36
 $tabLoc.Controls.Add($btnApply)
 $tabLoc.Controls.Add($btnStatus)
 
-$lblLocStatus = New-Label '' 16 164 920 44 $FontBold
+$lblLocStatus = New-Label '' 16 198 920 44 $FontBold
 $tabLoc.Controls.Add($lblLocStatus)
 
 $txtLocLog = New-Object System.Windows.Forms.TextBox
 $txtLocLog.Multiline = $true; $txtLocLog.ReadOnly = $true; $txtLocLog.ScrollBars = 'Vertical'; $txtLocLog.Font = $FontMono
-$txtLocLog.Location = New-Object System.Drawing.Point(16, 212)
-$txtLocLog.Size = New-Object System.Drawing.Size(920, 266)
+$txtLocLog.Location = New-Object System.Drawing.Point(16, 246)
+$txtLocLog.Size = New-Object System.Drawing.Size(920, 232)
 $txtLocLog.Anchor = 'Top, Bottom, Left, Right'
 $tabLoc.Controls.Add($txtLocLog)
 
@@ -351,7 +436,7 @@ function Show-LocaliseStatus([bool]$Quiet = $false) {
             'never-run' { $lblLocStatus.ForeColor = [System.Drawing.Color]::Black;     $lblLocStatus.Text = 'Not applied yet in this lab. Choose your country and click Apply.' }
             'starting'  { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue;  $lblLocStatus.Text = "Starting... ($($s.Time))" }
             'running'   { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue;  $lblLocStatus.Text = "In progress: $($s.Detail)  (updated $($s.Time))" }
-            'done'      { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkGreen; $lblLocStatus.Text = "Done: settings '$($s.Preset)' applied. $($s.Detail). Wait until all VMs have restarted (3 to 5 minutes)." }
+            'done'      { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkGreen; $lblLocStatus.Text = "Done: $(@(([string]$s.Preset) -split '\|')[-1]) settings applied. $($s.Detail). Wait until all VMs have restarted (3 to 5 minutes)." }
             'failed'    { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkRed;   $lblLocStatus.Text = "Failed: $($s.Detail)  - see the log below and tell your trainer." }
             default     { $lblLocStatus.ForeColor = [System.Drawing.Color]::Black;     $lblLocStatus.Text = "State: $($s.State)" }
         }
@@ -369,14 +454,19 @@ $pollTimer.Add_Tick({ Show-LocaliseStatus -Quiet $true })
 $btnStatus.Add_Click({ Show-LocaliseStatus })
 
 $btnApply.Add_Click({
-    $msg = "This sets a UK keyboard and London time on all the lab VMs.`r`n`r`n" +
+    if ($cbCountry.SelectedIndex -lt 0 -or $cbKeyboard.SelectedIndex -lt 0) { return }
+    $ch = Get-LocChoice
+    $msg = "This sets the keyboard to $($ch.Keyboard.name) and the time zone to $($ch.Country.name) ($($ch.Country.gaiaRegion)/$($ch.Country.gaiaZone)) on all the lab VMs.`r`n`r`n" +
            "About a minute after it starts, the Windows VMs restart - including this one (A-GUI). Save anything you have open first.`r`n`r`n" +
            "Lab Start opens again by itself when you log back in to A-GUI, and shows the result.`r`n`r`nContinue?"
     $ans = [System.Windows.Forms.MessageBox]::Show($msg, 'Apply keyboard and timezone', 'YesNo', 'Warning')
     if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
     Set-Busy $true
     try {
-        $r = Invoke-OnRdpHost -ScriptBlock $StartLocalise -Arguments @('uk', $LabUser, $LabPassword)
+        $label = "$($ch.Country.name), $($ch.Keyboard.name) keyboard"
+        $presetString = (@('custom', $ch.Keyboard.windows, $ch.Keyboard.gaia, $ch.Country.windowsTimezone, $ch.Country.gaiaRegion, $ch.Country.gaiaZone, $label) -join '|')
+        try { Set-Content -Path $CountryFile -Value $ch.Country.name -Encoding ASCII } catch {}
+        $r = Invoke-OnRdpHost -ScriptBlock $StartLocalise -Arguments @($presetString, $LabUser, $LabPassword)
         if ("$r" -eq 'already-running') {
             $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue
             $lblLocStatus.Text = 'Already running on RDP-HOST - showing progress.'
@@ -627,7 +717,7 @@ $btnCoursePage.Add_Click({
 $btnPrepPage.Add_Click({ try { Start-Process ((Get-SiteUrl) + '/lab-preparation/') } catch {} })
 
 # ---- Wiring -----------------------------------------------------------------
-function Fill-All { Fill-Courses; Fill-Checklist; Fill-Credentials; Fill-Tools; Fill-Notes }
+function Fill-All { Fill-Courses; Fill-Localise; Fill-Checklist; Fill-Credentials; Fill-Tools; Fill-Notes }
 $cbCourse.Add_SelectedIndexChanged({
     if ($script:FillingCourses) { return }
     $code = Get-SelectedCourse
@@ -636,7 +726,25 @@ $cbCourse.Add_SelectedIndexChanged({
 })
 $btnRefresh.Add_Click({ Set-Busy $true; $script:Content = Get-LabContent; Fill-All; Set-Busy $false })
 
+# Size the fixed-layout controls on tabs 1 and 2 to the tab (keeps them inside the window at any DPI)
+function Fit-Tabs {
+    $w = $tabLoc.ClientSize.Width; $h = $tabLoc.ClientSize.Height
+    if ($w -gt 200 -and $h -gt 300) {
+        $lblLocStatus.Width = $w - 32
+        $txtLocLog.SetBounds(16, $txtLocLog.Top, $w - 32, [Math]::Max(80, $h - $txtLocLog.Top - 12))
+    }
+    $w = $tabChk.ClientSize.Width; $h = $tabChk.ClientSize.Height
+    if ($w -gt 200 -and $h -gt 200) {
+        $clbW = [Math]::Min(560, [int](($w - 48) * 0.6))
+        $clb.SetBounds(16, 46, $clbW, [Math]::Max(80, $h - 58))
+        $lblChkDetail.SetBounds(16 + $clbW + 16, 46, [Math]::Max(80, $w - $clbW - 48), [Math]::Max(80, $h - 58))
+    }
+}
+foreach ($c in @($txtLocLog, $lblLocStatus, $clb, $lblChkDetail)) { $c.Anchor = 'Top, Left' }
+$tabLoc.Add_Resize({ Fit-Tabs }); $tabChk.Add_Resize({ Fit-Tabs }); $form.Add_Resize({ Fit-Tabs }); $tabs.Add_SelectedIndexChanged({ Fit-Tabs })
+
 $form.Add_Shown({
+    Fit-Tabs
     $form.TopMost = $true; $form.Activate(); $form.TopMost = $false
     Show-LocaliseStatus -Quiet $true
 })

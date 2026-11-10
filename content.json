@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "site": "https://caminoltd.github.io",
   "courses": [
     {
@@ -39,6 +39,309 @@
       "name": "Check Point Certified Maestro Administrator"
     }
   ],
+  "localise": {
+    "keyboards": [
+      {
+        "name": "Danish",
+        "windows": "da",
+        "gaia": "dk"
+      },
+      {
+        "name": "English (United Kingdom)",
+        "windows": "en-GB",
+        "gaia": "uk"
+      },
+      {
+        "name": "English (United States)",
+        "windows": "en-US",
+        "gaia": "us"
+      },
+      {
+        "name": "Finnish",
+        "windows": "fi",
+        "gaia": "fi"
+      },
+      {
+        "name": "French (France)",
+        "windows": "fr-FR",
+        "gaia": "fr"
+      },
+      {
+        "name": "French (Switzerland)",
+        "windows": "fr-CH",
+        "gaia": "fr_CH"
+      },
+      {
+        "name": "German (Germany)",
+        "windows": "de-DE",
+        "gaia": "de"
+      },
+      {
+        "name": "German (Switzerland)",
+        "windows": "de-CH",
+        "gaia": "sg"
+      },
+      {
+        "name": "Italian (Italy)",
+        "windows": "it-IT",
+        "gaia": "it"
+      },
+      {
+        "name": "Norwegian",
+        "windows": "nb",
+        "gaia": "no"
+      },
+      {
+        "name": "Polish",
+        "windows": "pl",
+        "gaia": "pl"
+      },
+      {
+        "name": "Portuguese (Portugal)",
+        "windows": "pt-PT",
+        "gaia": "pt-latin1"
+      },
+      {
+        "name": "Russian",
+        "windows": "ru",
+        "gaia": "ru"
+      },
+      {
+        "name": "Spanish (Spain)",
+        "windows": "es-ES",
+        "gaia": "es"
+      },
+      {
+        "name": "Swedish (Sweden)",
+        "windows": "sv-SE",
+        "gaia": "se-latin1"
+      },
+      {
+        "name": "Turkish",
+        "windows": "tr",
+        "gaia": "trq"
+      }
+    ],
+    "countries": [
+      {
+        "name": "United Kingdom",
+        "keyboard": "en-GB",
+        "windowsTimezone": "GMT Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "London"
+      },
+      {
+        "name": "Ireland",
+        "keyboard": "en-GB",
+        "windowsTimezone": "GMT Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Dublin"
+      },
+      {
+        "name": "Netherlands",
+        "keyboard": "en-US",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Amsterdam"
+      },
+      {
+        "name": "Belgium",
+        "keyboard": "fr-FR",
+        "windowsTimezone": "Romance Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Brussels"
+      },
+      {
+        "name": "Luxembourg",
+        "keyboard": "fr-CH",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Luxembourg"
+      },
+      {
+        "name": "France",
+        "keyboard": "fr-FR",
+        "windowsTimezone": "Romance Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Paris"
+      },
+      {
+        "name": "Germany",
+        "keyboard": "de-DE",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Berlin"
+      },
+      {
+        "name": "Austria",
+        "keyboard": "de-DE",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Vienna"
+      },
+      {
+        "name": "Switzerland (German)",
+        "keyboard": "de-CH",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Zurich"
+      },
+      {
+        "name": "Switzerland (French)",
+        "keyboard": "fr-CH",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Zurich"
+      },
+      {
+        "name": "Italy",
+        "keyboard": "it-IT",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Rome"
+      },
+      {
+        "name": "Spain",
+        "keyboard": "es-ES",
+        "windowsTimezone": "Romance Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Madrid"
+      },
+      {
+        "name": "Portugal",
+        "keyboard": "pt-PT",
+        "windowsTimezone": "GMT Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Lisbon"
+      },
+      {
+        "name": "Denmark",
+        "keyboard": "da",
+        "windowsTimezone": "Romance Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Copenhagen"
+      },
+      {
+        "name": "Norway",
+        "keyboard": "nb",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Oslo"
+      },
+      {
+        "name": "Sweden",
+        "keyboard": "sv-SE",
+        "windowsTimezone": "W. Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Stockholm"
+      },
+      {
+        "name": "Finland",
+        "keyboard": "fi",
+        "windowsTimezone": "FLE Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Helsinki"
+      },
+      {
+        "name": "Poland",
+        "keyboard": "pl",
+        "windowsTimezone": "Central European Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Warsaw"
+      },
+      {
+        "name": "Czech Republic",
+        "keyboard": "en-US",
+        "windowsTimezone": "Central Europe Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Prague"
+      },
+      {
+        "name": "Greece",
+        "keyboard": "en-US",
+        "windowsTimezone": "GTB Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Athens"
+      },
+      {
+        "name": "Romania",
+        "keyboard": "en-US",
+        "windowsTimezone": "GTB Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Bucharest"
+      },
+      {
+        "name": "Turkey",
+        "keyboard": "tr",
+        "windowsTimezone": "Turkey Standard Time",
+        "gaiaRegion": "Europe",
+        "gaiaZone": "Istanbul"
+      },
+      {
+        "name": "South Africa",
+        "keyboard": "en-US",
+        "windowsTimezone": "South Africa Standard Time",
+        "gaiaRegion": "Africa",
+        "gaiaZone": "Johannesburg"
+      },
+      {
+        "name": "Israel",
+        "keyboard": "en-US",
+        "windowsTimezone": "Israel Standard Time",
+        "gaiaRegion": "Asia",
+        "gaiaZone": "Jerusalem"
+      },
+      {
+        "name": "United Arab Emirates",
+        "keyboard": "en-US",
+        "windowsTimezone": "Arabian Standard Time",
+        "gaiaRegion": "Asia",
+        "gaiaZone": "Dubai"
+      },
+      {
+        "name": "Saudi Arabia",
+        "keyboard": "en-US",
+        "windowsTimezone": "Arab Standard Time",
+        "gaiaRegion": "Asia",
+        "gaiaZone": "Riyadh"
+      },
+      {
+        "name": "India",
+        "keyboard": "en-US",
+        "windowsTimezone": "India Standard Time",
+        "gaiaRegion": "Asia",
+        "gaiaZone": "Kolkata"
+      },
+      {
+        "name": "Singapore",
+        "keyboard": "en-US",
+        "windowsTimezone": "Singapore Standard Time",
+        "gaiaRegion": "Asia",
+        "gaiaZone": "Singapore"
+      },
+      {
+        "name": "USA (Eastern)",
+        "keyboard": "en-US",
+        "windowsTimezone": "Eastern Standard Time",
+        "gaiaRegion": "America",
+        "gaiaZone": "New_York"
+      },
+      {
+        "name": "USA (Central)",
+        "keyboard": "en-US",
+        "windowsTimezone": "Central Standard Time",
+        "gaiaRegion": "America",
+        "gaiaZone": "Chicago"
+      },
+      {
+        "name": "USA (Pacific)",
+        "keyboard": "en-US",
+        "windowsTimezone": "Pacific Standard Time",
+        "gaiaRegion": "America",
+        "gaiaZone": "Los_Angeles"
+      }
+    ]
+  },
   "checklist": [
     {
       "text": "Choose your course (top right)",
