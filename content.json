@@ -1,49 +1,444 @@
 {
-  "version": 1,
-  "checklist": [
+  "version": 2,
+  "site": "https://caminoltd.github.io",
+  "courses": [
     {
-      "text": "Set keyboard and timezone (tab 1, Localise)",
-      "detail": "Choose your country and click Apply. The Windows VMs, including A-GUI, restart about a minute later."
+      "code": "CPDA",
+      "name": "Check Point Deployment Administrator"
     },
     {
-      "text": "Wait for the VMs to restart (3 to 5 minutes)",
+      "code": "CCSA",
+      "name": "Check Point Certified Security Administrator"
+    },
+    {
+      "code": "CCSE",
+      "name": "Check Point Certified Security Expert"
+    },
+    {
+      "code": "CCTA",
+      "name": "Check Point Certified Troubleshooting Administrator"
+    },
+    {
+      "code": "CCTE",
+      "name": "Check Point Certified Troubleshooting Expert"
+    },
+    {
+      "code": "CTPS",
+      "name": "Check Point Certified Threat Prevention Specialist"
+    },
+    {
+      "code": "CCES",
+      "name": "Check Point Certified Endpoint Specialist"
+    },
+    {
+      "code": "CPVS",
+      "name": "Check Point Certified VPN Specialist"
+    },
+    {
+      "code": "CCMA",
+      "name": "Check Point Certified Maestro Administrator"
+    }
+  ],
+  "checklist": [
+    {
+      "text": "Choose your course (top right)",
+      "detail": "Lab Start then shows the logins, documents and notes for your course."
+    },
+    {
+      "text": "Set keyboard and timezone (tab 1, Localise)",
+      "detail": "Choose your country and click Apply. The Windows VMs, including A-GUI, restart about a minute later. Lab Start opens again by itself when you log back in."
+    },
+    {
+      "text": "Wait for all the VMs to restart (3 to 5 minutes)",
       "detail": "Log back in to A-GUI when its login screen returns. The Gaia VMs restart too."
     },
     {
-      "text": "Open Lab Start again and click Check status",
-      "detail": "Use the Lab Start shortcut on the desktop. The Localise tab should say Done."
+      "text": "Check that the Localise tab says Done",
+      "detail": "If it does not, click Check status. If it says Failed, tell your trainer."
     },
     {
       "text": "Note the logins and IP addresses (tab 3)",
-      "detail": "Double-click any value to copy it. The full list is on page 3 of each lab guide."
+      "detail": "Double-click any value to copy it. They are also on the 3rd page of every lab in your lab guide."
     },
     {
-      "text": "Look through the Check Point Tools folder (tab 4)",
-      "detail": "It holds the tools the labs use."
+      "text": "Look at your course documents (tab 4)",
+      "detail": "Lab credentials, command lists and URL lists for your course."
     },
     {
       "text": "Read the lab notes (tab 5)",
-      "detail": "Corrections and tips for steps that catch people out."
+      "detail": "Corrections and tips, including lab steps to skip."
     },
     {
       "text": "Start Lab 1A",
       "detail": ""
     }
   ],
-  "credentials": [
-    { "system": "A-GUI (Windows)",    "address": "10.1.1.201", "username": "Admin", "password": "Chkp!234", "notes": "This machine" },
-    { "system": "RDP-HOST (Windows)", "address": "10.1.1.230", "username": "Admin", "password": "Chkp!234", "notes": "Jump host. Settings are applied from here." },
-    { "system": "Gaia (management and gateways)", "address": "see lab guide page 3", "username": "admin", "password": "Chkp!234", "notes": "Expert mode password: Chkp!234" }
-  ],
-  "tools": {
-    "*SmartConsole*": "Check Point SmartConsole - the management GUI used in most labs.",
-    "*MobaXterm*": "SSH client for connecting to the Gaia command line.",
-    "*PuTTY*": "SSH client for connecting to the Gaia command line.",
-    "*WinSCP*": "Copies files to and from the Gaia VMs over SSH.",
-    "*Wireshark*": "Packet capture viewer."
+  "credentials": {
+    "default": [
+      {
+        "system": "A-GUI",
+        "address": "10.1.1.201",
+        "username": ".\\admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (SmartConsole)",
+        "address": "10.1.1.101",
+        "username": "cpadmin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (Gaia Portal)",
+        "address": "https://10.1.1.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (SSH)",
+        "address": "10.1.1.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "Expert mode",
+        "address": "N/A",
+        "username": "N/A",
+        "password": "Chkp!234"
+      }
+    ],
+    "CCSA": [
+      {
+        "system": "A-GUI",
+        "address": "10.1.1.201",
+        "username": ".\\admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (SmartConsole)",
+        "address": "10.1.1.101",
+        "username": "cpadmin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (Personal credentials)",
+        "address": "10.1.1.101",
+        "username": "<FirstName_LastName>",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (Gaia Portal)",
+        "address": "https://10.1.1.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (SSH)",
+        "address": "10.1.1.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SME (Gaia Portal)",
+        "address": "https://10.1.1.130",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SME (SSH)",
+        "address": "10.1.1.130",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW-01 (Gaia Portal)",
+        "address": "https://10.1.1.2",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW-01 (SSH)",
+        "address": "10.1.1.2",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW-02 (Gaia Portal)",
+        "address": "https://10.1.1.3",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW-02 (SSH)",
+        "address": "10.1.1.3",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Host",
+        "address": "192.168.11.201",
+        "username": ".\\admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Host (User1)",
+        "address": "192.168.11.201",
+        "username": "alpha.cp\\User1",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Host (User2)",
+        "address": "192.168.11.201",
+        "username": "alpha.cp\\User2",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-DMZ (RDP)",
+        "address": "192.168.12.101",
+        "username": "administrator",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-LDAP",
+        "address": "192.168.11.101",
+        "username": "administrator",
+        "password": "Chkp!234"
+      }
+    ],
+    "CCSE": [
+      {
+        "system": "A-GUI",
+        "address": "10.1.1.201",
+        "username": ".\\admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (SmartConsole)",
+        "address": "10.1.1.101",
+        "username": "cpadmin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (Personal Super User)",
+        "address": "10.1.1.101",
+        "username": "<YourGivenName_YourFamilyName>",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (Gaia Portal)",
+        "address": "https://10.1.1.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (SSH)",
+        "address": "10.1.1.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "Expert mode",
+        "address": "N/A",
+        "username": "N/A",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS-02 (SmartConsole)",
+        "address": "10.1.1.111",
+        "username": "cpadmin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS-02 (Personal Super User)",
+        "address": "10.1.1.111",
+        "username": "<YourGivenName_YourFamilyName>",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS-02 (Gaia Portal)",
+        "address": "https://10.1.1.111",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS-02 (SSH)",
+        "address": "10.1.1.111",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SME (SmartConsole)",
+        "address": "10.1.1.130",
+        "username": "cpadmin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SME (Personal Super User)",
+        "address": "10.1.1.130",
+        "username": "<YourGivenName_YourFamilyName>",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SME (Gaia Portal)",
+        "address": "https://10.1.1.130",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SME (SSH)",
+        "address": "10.1.1.130",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW-01 (Gaia Portal)",
+        "address": "https://10.1.1.2:4434",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW-01 (SSH)",
+        "address": "10.1.1.2",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW-02 (Gaia Portal)",
+        "address": "https://10.1.1.3:4434",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW-02 (SSH)",
+        "address": "10.1.1.3",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Elastic-Cluster (Gaia Portal)",
+        "address": "https://10.1.1.1:4434",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Elastic-Cluster-s01-01 (Gaia Portal)",
+        "address": "https://10.1.1.1",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Elastic-Cluster (SSH)",
+        "address": "10.1.1.1",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Elastic-Cluster-s01-01 / -02 (Console)",
+        "address": "N/A",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Host",
+        "address": "192.168.11.201",
+        "username": ".\\admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Host (User1)",
+        "address": "192.168.11.201",
+        "username": "alpha.cp\\User1",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-DMZ",
+        "address": "192.168.12.101",
+        "username": "administrator",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-LDAP",
+        "address": "192.168.11.101",
+        "username": "administrator",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "B-GW (Gaia Portal)",
+        "address": "https://198.51.100.1",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "B-GW (SSH)",
+        "address": "198.51.100.1",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "B-Host",
+        "address": "192.168.21.201",
+        "username": "admin",
+        "password": "Chkp!234"
+      }
+    ]
   },
-  "notes": [
-    "Ignore any lab steps that use Hyper-V Manager.",
-    "Use the RDP-HOST connection rather than the console view for a better screen, clipboard and keyboard."
-  ]
+  "courseDocs": [
+    {
+      "match": "*Credentials*",
+      "desc": "Logins and IP addresses for every lab VM"
+    },
+    {
+      "match": "*Command*List*",
+      "desc": "Commands used in the labs, ready to copy"
+    },
+    {
+      "match": "*URL*List*",
+      "desc": "Web addresses used in the labs"
+    },
+    {
+      "match": "*CheckPointTools*",
+      "desc": "What each item in the Check Point Tools folder is"
+    },
+    {
+      "match": "*Worksheet*",
+      "desc": "Lab worksheet"
+    }
+  ],
+  "tools": [
+    {
+      "match": "R82 Documentation",
+      "desc": "Check Point R82 guides, available offline"
+    },
+    {
+      "match": "IKEView*",
+      "desc": "Viewer for VPN debug files (ike.elg / ikev2.xml)"
+    },
+    {
+      "match": "for_Wireshark*",
+      "desc": "Wireshark add-ons for Check Point captures"
+    },
+    {
+      "match": "Import Scripts*",
+      "desc": "Scripts used in some labs"
+    },
+    {
+      "match": "Licenses*",
+      "desc": "Lab licences"
+    }
+  ],
+  "notes": {
+    "default": [
+      "Ignore any lab steps that use Hyper-V Manager. All the VMs you need are already running.",
+      "Logins and IP addresses are on the 3rd page of every lab in your lab guide, and in tab 3.",
+      "Save your lab at the end of each day. Saving suspends the VMs and stops the countdown clock until you Launch (resume) the lab again.",
+      "For the full lab notes with page references, and the lab topology, click the course page button above."
+    ],
+    "CCSE": [
+      "Ignore any lab steps that use Hyper-V Manager. All the VMs used in Labs 1 to 5 are already running when the lab launches.",
+      "Logins and IP addresses are on the 3rd page of every lab in your lab guide, and in tab 3. SmartConsole uses cpadmin.",
+      "Lab 1: no Jumbo Hotfix is needed. Ignore the references to JHFA 33.",
+      "Lab 1: A-SMS-02 is already running. Its Gaia Portal is https://10.1.1.111",
+      "Save your lab at the end of each day. Saving suspends the VMs and stops the countdown clock until you Launch (resume) the lab again.",
+      "For the full CCSE lab notes with page references, and the lab topology, click the course page button above."
+    ]
+  }
 }

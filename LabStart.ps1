@@ -37,7 +37,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.1.2'
+$Version         = '0.2.0'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/main'
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -66,19 +66,34 @@ $FallbackContentJson = @'
 '@
 
 function Get-LabContent {
-    $json = $null
+    $json  = $null
+    $cache = Join-Path $StateDir 'content.json'
     if (-not $NoContentDownload) {
-        try {
-            $url  = "$RepoRaw/content.json?" + (Get-Date -Format 'yyyyMMddHHmmss')
-            $json = (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 15).Content
-        } catch { $json = $null }
+        for ($try = 1; $try -le 2 -and -not $json; $try++) {
+            try {
+                $url  = "$RepoRaw/content.json?" + (Get-Date -Format 'yyyyMMddHHmmss')
+                $json = (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10).Content
+                try { $null = $json | ConvertFrom-Json; Set-Content -Path $cache -Value $json -Encoding UTF8 } catch { $json = $null }
+            } catch { $json = $null; if ($try -lt 2) { Start-Sleep -Seconds 3 } }
+        }
     }
+    if (-not $json -and (Test-Path $cache)) { $json = Get-Content -Raw -Path $cache }
     if (-not $json) {
         $local = Join-Path $PSScriptRoot 'content.json'
         if ($PSScriptRoot -and (Test-Path $local)) { $json = Get-Content -Raw -Path $local }
     }
     if (-not $json) { $json = $FallbackContentJson }
     return ($json | ConvertFrom-Json)
+}
+
+# Returns the entry for a course from a value that is either a plain list (all courses)
+# or an object keyed by course code with an optional "default" entry.
+function Get-CourseValue($Obj, [string]$Code) {
+    if ($null -eq $Obj) { return @() }
+    if ($Obj -is [array]) { return @($Obj) }
+    if ($Code) { $p = $Obj.PSObject.Properties[$Code]; if ($p) { return @($p.Value) } }
+    $d = $Obj.PSObject.Properties['default']; if ($d) { return @($d.Value) }
+    return @()
 }
 
 # ---------------------------------------------------------------------------
@@ -240,8 +255,38 @@ $form.Font = $FontBody
 
 $header = New-Label 'Camino Lab Start' 16 10 600 32 $FontTitle
 $form.Controls.Add($header)
-$sub = New-Label 'Everything you need before Lab 1A, in one place. Work through the tabs from left to right.' 18 42 900 22
+$sub = New-Label 'Your lab companion: set up the lab, then find the logins, IP addresses, course documents and lab notes for your course.' 18 42 960 22
 $form.Controls.Add($sub)
+
+$CourseFile = Join-Path $StateDir 'course.txt'
+$lblCourse = New-Label 'Your course:' 580 14 100 24 $FontBold
+$lblCourse.Anchor = 'Top, Right'
+$form.Controls.Add($lblCourse)
+$cbCourse = New-Object System.Windows.Forms.ComboBox
+$cbCourse.DropDownStyle = 'DropDownList'
+$cbCourse.Location = New-Object System.Drawing.Point(680, 10)
+$cbCourse.Size = New-Object System.Drawing.Size(292, 28)
+$cbCourse.Anchor = 'Top, Right'
+$form.Controls.Add($cbCourse)
+$script:FillingCourses = $false
+
+function Get-SelectedCourse {
+    if ($cbCourse.SelectedIndex -lt 0) { return $null }
+    return [string](@($Content.courses)[$cbCourse.SelectedIndex].code)
+}
+function Fill-Courses {
+    $script:FillingCourses = $true
+    $cbCourse.Items.Clear()
+    $saved = $null
+    if (Test-Path $CourseFile) { $saved = (Get-Content -Raw -Path $CourseFile).Trim() }
+    $i = 0
+    foreach ($c in @($Content.courses)) {
+        [void]$cbCourse.Items.Add("$($c.code) - $($c.name)")
+        if ($saved -and $c.code -eq $saved) { $cbCourse.SelectedIndex = $i }
+        $i++
+    }
+    $script:FillingCourses = $false
+}
 if ($env:COMPUTERNAME -ne 'A-GUI') {
     $warn = New-Label "Note: this is $env:COMPUTERNAME. Lab Start is meant to run on A-GUI." 18 64 900 22 $FontBold
     $warn.ForeColor = [System.Drawing.Color]::DarkOrange
@@ -326,7 +371,7 @@ $btnStatus.Add_Click({ Show-LocaliseStatus })
 $btnApply.Add_Click({
     $msg = "This sets a UK keyboard and London time on all the lab VMs.`r`n`r`n" +
            "About a minute after it starts, the Windows VMs restart - including this one (A-GUI). Save anything you have open first.`r`n`r`n" +
-           "When you have logged back in to A-GUI, open Lab Start again (desktop shortcut) and click 'Check status'.`r`n`r`nContinue?"
+           "Lab Start opens again by itself when you log back in to A-GUI, and shows the result.`r`n`r`nContinue?"
     $ans = [System.Windows.Forms.MessageBox]::Show($msg, 'Apply keyboard and timezone', 'YesNo', 'Warning')
     if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
     Set-Busy $true
@@ -337,8 +382,15 @@ $btnApply.Add_Click({
             $lblLocStatus.Text = 'Already running on RDP-HOST - showing progress.'
         } else {
             $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue
-            $lblLocStatus.Text = 'Started on RDP-HOST. A-GUI will restart shortly - log back in and reopen Lab Start.'
+            $lblLocStatus.Text = 'Started on RDP-HOST. A-GUI restarts shortly - Lab Start opens again by itself after you log back in.'
         }
+        # Reopen Lab Start once at the next logon (A-GUI restarts part-way through the run).
+        try {
+            $self = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $StateDir 'LabStart.ps1' }
+            $cmd  = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$self`""
+            New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Force | Out-Null
+            New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'LabStart' -Value $cmd -PropertyType String -Force | Out-Null
+        } catch {}
         $pollTimer.Start()
     }
     catch {
@@ -392,24 +444,33 @@ $clb.Add_ItemCheck({
 # ---- Tab 3: Credentials -----------------------------------------------------
 $tabCred = New-Object System.Windows.Forms.TabPage
 $tabCred.Text = '3. Credentials & IPs'
+$tabCred.Padding = New-Object System.Windows.Forms.Padding(12)
 $tabs.TabPages.Add($tabCred)
-$tabCred.Controls.Add((New-Label 'Logins for the lab VMs. Double-click any cell to copy it. The full list is on page 3 of each lab guide.' 16 16 900 22))
+
+$lblCredTop = New-Label 'Logins and IP addresses for your course. Double-click any cell to copy it. They are also on the 3rd page of every lab in your lab guide.' 0 0 10 44
+$lblCredTop.Dock = 'Top'
+$pnlCred = New-Object System.Windows.Forms.Panel
+$pnlCred.Dock = 'Bottom'; $pnlCred.Height = 44
+$btnCredPdf = New-Button 'Open the full list (PDF)' 0 8 210 32
+$lblCopied = New-Label '' 224 14 600 22
+$pnlCred.Controls.Add($btnCredPdf); $pnlCred.Controls.Add($lblCopied)
 
 $grid = New-Object System.Windows.Forms.DataGridView
-$grid.Location = New-Object System.Drawing.Point(16, 46)
-$grid.Size = New-Object System.Drawing.Size(920, 400)
-$grid.Anchor = 'Top, Bottom, Left, Right'
-$grid.ReadOnly = $true; $grid.AllowUserToAddRows = $false; $grid.AllowUserToDeleteRows = $false
+$grid.Dock = 'Fill'
+$grid.ReadOnly = $true; $grid.AllowUserToAddRows = $false; $grid.AllowUserToDeleteRows = $false; $grid.AllowUserToResizeRows = $false
 $grid.RowHeadersVisible = $false; $grid.SelectionMode = 'CellSelect'; $grid.AutoSizeColumnsMode = 'Fill'
-foreach ($c in 'System', 'Address', 'Username', 'Password', 'Notes') { [void]$grid.Columns.Add($c, $c) }
-$tabCred.Controls.Add($grid)
-$lblCopied = New-Label '' 16 452 900 22
-$lblCopied.Anchor = 'Bottom, Left'
-$tabCred.Controls.Add($lblCopied)
+$grid.BackgroundColor = [System.Drawing.SystemColors]::Window
+foreach ($c in @(@('System', 34), @('Address', 26), @('Username', 22), @('Password', 18))) {
+    $i = $grid.Columns.Add($c[0], $c[0]); $grid.Columns[$i].FillWeight = $c[1]
+}
+# Dock order: Top and Bottom first, Fill last
+$tabCred.Controls.Add($grid); $tabCred.Controls.Add($pnlCred); $tabCred.Controls.Add($lblCredTop)
+$grid.BringToFront()
 
 function Fill-Credentials {
     $grid.Rows.Clear()
-    foreach ($r in @($Content.credentials)) { [void]$grid.Rows.Add($r.system, $r.address, $r.username, $r.password, $r.notes) }
+    foreach ($r in (Get-CourseValue $Content.credentials (Get-SelectedCourse))) { [void]$grid.Rows.Add($r.system, $r.address, $r.username, $r.password) }
+    $lblCopied.Text = ''
 }
 $grid.Add_CellDoubleClick({
     param($sender, $e)
@@ -418,21 +479,7 @@ $grid.Add_CellDoubleClick({
     if ($v) { [System.Windows.Forms.Clipboard]::SetText($v); $lblCopied.Text = "Copied: $v" }
 })
 
-# ---- Tab 4: Check Point Tools ----------------------------------------------
-$tabTools = New-Object System.Windows.Forms.TabPage
-$tabTools.Text = '4. Check Point Tools'
-$tabs.TabPages.Add($tabTools)
-$tabTools.Controls.Add((New-Label 'What is in the "Check Point Tools" folder on the desktop, and what each item is for. Double-click to open.' 16 16 900 22))
-
-$lvTools = New-Object System.Windows.Forms.ListView
-$lvTools.View = 'Details'; $lvTools.FullRowSelect = $true
-$lvTools.Location = New-Object System.Drawing.Point(16, 46)
-$lvTools.Size = New-Object System.Drawing.Size(920, 420)
-$lvTools.Anchor = 'Top, Bottom, Left, Right'
-[void]$lvTools.Columns.Add('Item', 280)
-[void]$lvTools.Columns.Add('What it is for', 620)
-$tabTools.Controls.Add($lvTools)
-
+# ---- Course folder helpers ----------------------------------------------------
 function Get-ToolsFolder {
     $candidates = @(
         (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Check Point Tools'),
@@ -441,26 +488,105 @@ function Get-ToolsFolder {
     foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
     return $null
 }
+function Get-CourseFolder([string]$Code) {
+    $tf = Get-ToolsFolder
+    if (-not $tf -or -not $Code) { return $null }
+    return (Get-ChildItem -Path $tf -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "$Code-*" } | Select-Object -First 1)
+}
+$btnCredPdf.Add_Click({
+    $code = Get-SelectedCourse
+    if (-not $code) { [void][System.Windows.Forms.MessageBox]::Show('Choose your course at the top right first.', 'Lab Start'); return }
+    $cf = Get-CourseFolder $code
+    $pdf = $null
+    if ($cf) { $pdf = Get-ChildItem -Path $cf.FullName -Recurse -File -Filter '*Credentials*.pdf' -ErrorAction SilentlyContinue | Select-Object -First 1 }
+    if ($pdf) { Start-Process -FilePath $pdf.FullName }
+    else { [void][System.Windows.Forms.MessageBox]::Show("No credentials PDF found for $code in the Check Point Tools folder. Use the 3rd page of any lab in your lab guide.", 'Lab Start') }
+})
+
+# ---- Tab 4: Course documents and tools -------------------------------------
+$tabTools = New-Object System.Windows.Forms.TabPage
+$tabTools.Text = '4. Check Point Tools'
+$tabTools.Padding = New-Object System.Windows.Forms.Padding(12)
+$tabs.TabPages.Add($tabTools)
+
+$lblToolsTop = New-Label 'Your course documents and the main tools from the "Check Point Tools" folder on the desktop. Double-click to open.' 0 0 10 32
+$lblToolsTop.Dock = 'Top'
+$pnlTools = New-Object System.Windows.Forms.Panel
+$pnlTools.Dock = 'Bottom'; $pnlTools.Height = 36
+$chkAllTools = New-Object System.Windows.Forms.CheckBox
+$chkAllTools.Text = 'Show everything in the folder'; $chkAllTools.AutoSize = $true
+$chkAllTools.Location = New-Object System.Drawing.Point(0, 10)
+$pnlTools.Controls.Add($chkAllTools)
+
+$lvTools = New-Object System.Windows.Forms.ListView
+$lvTools.Dock = 'Fill'
+$lvTools.View = 'Details'; $lvTools.FullRowSelect = $true; $lvTools.ShowGroups = $true
+[void]$lvTools.Columns.Add('Item', 340)
+[void]$lvTools.Columns.Add('What it is for', 560)
+$tabTools.Controls.Add($lvTools); $tabTools.Controls.Add($pnlTools); $tabTools.Controls.Add($lblToolsTop)
+$lvTools.BringToFront()
+
+function Get-PatternList($Obj) {
+    # Accepts a list of { "match": ..., "desc": ... } or an object of pattern -> description.
+    $out = @()
+    if ($null -eq $Obj) { return $out }
+    if ($Obj -is [array]) { foreach ($e in $Obj) { $out += ,@([string]$e.match, [string]$e.desc) } }
+    else { foreach ($p in $Obj.PSObject.Properties) { $out += ,@([string]$p.Name, [string]$p.Value) } }
+    return ,$out
+}
+function Add-ToolItem($Group, [string]$Name, [string]$Desc, [string]$Path) {
+    $it = New-Object System.Windows.Forms.ListViewItem($Name)
+    [void]$it.SubItems.Add($Desc)
+    $it.Tag = $Path; $it.Group = $Group
+    [void]$lvTools.Items.Add($it)
+}
 function Fill-Tools {
-    $lvTools.Items.Clear()
+    $lvTools.Items.Clear(); $lvTools.Groups.Clear()
     $folder = Get-ToolsFolder
     if (-not $folder) {
-        $it = New-Object System.Windows.Forms.ListViewItem('(folder not found)')
-        [void]$it.SubItems.Add('No "Check Point Tools" folder on this desktop.')
-        [void]$lvTools.Items.Add($it); return
+        $g = $lvTools.Groups.Add('none', 'Check Point Tools')
+        Add-ToolItem $g '(folder not found)' 'No "Check Point Tools" folder on this desktop.' $null
+        return
     }
-    $descs = @{}
-    if ($Content.tools) { foreach ($p in $Content.tools.PSObject.Properties) { $descs[$p.Name] = $p.Value } }
-    foreach ($f in Get-ChildItem -Path $folder | Sort-Object Name) {
-        $name = [IO.Path]::GetFileNameWithoutExtension($f.Name)
-        $desc = ''
-        foreach ($k in $descs.Keys) { if ($f.Name -like $k) { $desc = $descs[$k]; break } }
-        $it = New-Object System.Windows.Forms.ListViewItem($name)
-        [void]$it.SubItems.Add($desc)
-        $it.Tag = $f.FullName
-        [void]$lvTools.Items.Add($it)
+    $code  = Get-SelectedCourse
+    $shown = @{}
+
+    # 1. The selected course's own folder: list its documents
+    $gCourse = $lvTools.Groups.Add('course', $(if ($code) { "Your course documents ($code)" } else { 'Your course documents - choose your course at the top right' }))
+    $cf = Get-CourseFolder $code
+    if ($cf) {
+        $shown[$cf.FullName] = $true
+        $docPatterns = Get-PatternList $Content.courseDocs
+        foreach ($f in (Get-ChildItem -Path $cf.FullName -Recurse -File -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -First 40)) {
+            $desc = 'Course document'
+            foreach ($pp in $docPatterns) { if ($f.Name -like $pp[0]) { $desc = $pp[1]; break } }
+            Add-ToolItem $gCourse ([IO.Path]::GetFileNameWithoutExtension($f.Name)) $desc $f.FullName
+        }
+    } elseif ($code) {
+        Add-ToolItem $gCourse "(no $code folder found)" 'Your course documents are not in this lab image.' $null
+    }
+
+    # 2. The main tools, in the order given in content.json
+    $gTools = $lvTools.Groups.Add('tools', 'Tools')
+    $items = @(Get-ChildItem -Path $folder -ErrorAction SilentlyContinue)
+    foreach ($pp in (Get-PatternList $Content.tools)) {
+        foreach ($f in ($items | Where-Object { $_.Name -like $pp[0] })) {
+            if ($shown[$f.FullName]) { continue }
+            $shown[$f.FullName] = $true
+            Add-ToolItem $gTools ([IO.Path]::GetFileNameWithoutExtension($f.Name)) $pp[1] $f.FullName
+        }
+    }
+
+    # 3. Everything else, only when asked for
+    if ($chkAllTools.Checked) {
+        $gAll = $lvTools.Groups.Add('all', 'Everything else in the folder')
+        foreach ($f in ($items | Sort-Object Name)) {
+            if ($shown[$f.FullName]) { continue }
+            Add-ToolItem $gAll ([IO.Path]::GetFileNameWithoutExtension($f.Name)) '' $f.FullName
+        }
     }
 }
+$chkAllTools.Add_CheckedChanged({ Fill-Tools })
 $lvTools.Add_DoubleClick({
     if ($lvTools.SelectedItems.Count -gt 0 -and $lvTools.SelectedItems[0].Tag) {
         try { Start-Process -FilePath $lvTools.SelectedItems[0].Tag } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Could not open') | Out-Null }
@@ -470,18 +596,44 @@ $lvTools.Add_DoubleClick({
 # ---- Tab 5: Lab notes -------------------------------------------------------
 $tabNotes = New-Object System.Windows.Forms.TabPage
 $tabNotes.Text = '5. Lab notes'
+$tabNotes.Padding = New-Object System.Windows.Forms.Padding(12)
 $tabs.TabPages.Add($tabNotes)
+
+$pnlNotes = New-Object System.Windows.Forms.Panel
+$pnlNotes.Dock = 'Top'; $pnlNotes.Height = 48
+$btnCoursePage = New-Button 'Open the course page: lab notes and topology' 0 4 360 34
+$btnPrepPage   = New-Button 'Open the lab preparation checklist' 372 4 290 34
+$pnlNotes.Controls.Add($btnCoursePage); $pnlNotes.Controls.Add($btnPrepPage)
+
 $txtNotes = New-Object System.Windows.Forms.TextBox
+$txtNotes.Dock = 'Fill'
 $txtNotes.Multiline = $true; $txtNotes.ReadOnly = $true; $txtNotes.ScrollBars = 'Vertical'
 $txtNotes.Font = New-Object System.Drawing.Font('Segoe UI', 11)
-$txtNotes.Location = New-Object System.Drawing.Point(16, 16)
-$txtNotes.Size = New-Object System.Drawing.Size(920, 450)
-$txtNotes.Anchor = 'Top, Bottom, Left, Right'
-$tabNotes.Controls.Add($txtNotes)
-function Fill-Notes { $txtNotes.Text = (@($Content.notes) | ForEach-Object { '- ' + $_ }) -join "`r`n`r`n" }
+$tabNotes.Controls.Add($txtNotes); $tabNotes.Controls.Add($pnlNotes)
+$txtNotes.BringToFront()
+
+function Get-SiteUrl { if ($Content.site) { return ([string]$Content.site).TrimEnd('/') } else { return 'https://caminoltd.github.io' } }
+function Fill-Notes {
+    $code = Get-SelectedCourse
+    $btnCoursePage.Text = $(if ($code) { "Open the $code course page: lab notes and topology" } else { 'Open the course pages: lab notes and topology' })
+    $lines = @(Get-CourseValue $Content.notes $code)
+    $txtNotes.Text = ($lines | ForEach-Object { '- ' + $_ }) -join "`r`n`r`n"
+}
+$btnCoursePage.Add_Click({
+    $code = Get-SelectedCourse
+    $url = (Get-SiteUrl) + '/' + $(if ($code) { $code.ToLower() + '/' } else { '' })
+    try { Start-Process $url } catch {}
+})
+$btnPrepPage.Add_Click({ try { Start-Process ((Get-SiteUrl) + '/lab-preparation/') } catch {} })
 
 # ---- Wiring -----------------------------------------------------------------
-function Fill-All { Fill-Checklist; Fill-Credentials; Fill-Tools; Fill-Notes }
+function Fill-All { Fill-Courses; Fill-Checklist; Fill-Credentials; Fill-Tools; Fill-Notes }
+$cbCourse.Add_SelectedIndexChanged({
+    if ($script:FillingCourses) { return }
+    $code = Get-SelectedCourse
+    if ($code) { try { Set-Content -Path $CourseFile -Value $code -Encoding ASCII } catch {} }
+    Fill-Credentials; Fill-Tools; Fill-Notes
+})
 $btnRefresh.Add_Click({ Set-Busy $true; $script:Content = Get-LabContent; Fill-All; Set-Busy $false })
 
 $form.Add_Shown({

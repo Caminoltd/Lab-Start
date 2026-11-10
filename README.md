@@ -14,13 +14,15 @@ This opens the window and adds a **Lab Start** shortcut on the desktop, so stude
 
 | Tab | What it does |
 | --- | --- |
-| 1. Localise | Applies keyboard and timezone to every lab VM in one click, without going to RDP-HOST. Shows progress and the result after the restart. |
+| 1. Localise | Applies keyboard and timezone to every lab VM in one click, without going to RDP-HOST. Lab Start reopens by itself after A-GUI restarts (RunOnce) and shows the result. |
 | 2. Lab checklist | Steps to tick off; ticks are saved on A-GUI for that user. |
-| 3. Credentials & IPs | Lab logins; double-click a cell to copy it. |
-| 4. Check Point Tools | Lists the desktop "Check Point Tools" folder with a description of each item; double-click opens it. |
-| 5. Lab notes | Corrections and tips. |
+| 3. Credentials & IPs | Logins and IPs for the chosen course; double-click a cell to copy it. Button opens the course's credentials PDF. |
+| 4. Check Point Tools | The chosen course's documents, then the main tools. "Show everything" lists the rest of the folder. |
+| 5. Lab notes | Notes for the chosen course, plus buttons for the course page (lab notes, topology) and the checklist on caminoltd.github.io. |
 
-Tabs 2 to 5 are filled from **`content.json`**: edit that file to change the wording, credentials, tool descriptions or notes. No code change needed.
+The student chooses their course at the top right (remembered on A-GUI). Every course uses the same A-GUI image, so the course choice decides what tabs 3 to 5 show.
+
+Tabs 2 to 5 are filled from **`content.json`** (cached on A-GUI in case the download fails): edit that file to change the wording, credentials, tool descriptions or notes. No code change needed.
 
 ## How Localise works
 
@@ -31,6 +33,7 @@ Tabs 2 to 5 are filled from **`content.json`**: edit that file to change the wor
 
 ## Status
 
+- **v0.2.0**: course selector; per-course credentials (CCSA, CCSE; others use `default`); tools tab filtered; notes link to the course pages; auto-reopen after the restart.
 - **v0.1.0**: UK only. Other countries need a generic preset in the patcher. Next step: get a copy of the original `C:\scripts\changes.ps1` (the `.bak-*` file on RDP-HOST) to check which keyboard, timezone and Gaia values its menus accept.
 - `content.json` holds only values confirmed so far. Add per-course credentials, IPs and lab notes.
 
