@@ -38,7 +38,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.5.1'
+$Version         = '0.6.0'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -550,9 +550,10 @@ $lblCredTop = New-Label 'Logins and IP addresses for your course. Double-click a
 $lblCredTop.Dock = 'Top'
 $pnlCred = New-Object System.Windows.Forms.Panel
 $pnlCred.Dock = 'Bottom'; $pnlCred.Height = 44
-$btnCredPdf = New-Button 'Open the full list (PDF)' 0 8 210 32
-$lblCopied = New-Label '' 224 14 600 22
-$pnlCred.Controls.Add($btnCredPdf); $pnlCred.Controls.Add($lblCopied)
+$btnCredPdf = New-Button 'Open the full list (PDF)' 0 8 200 32
+$btnCredOpen = New-Button 'Open web address' 208 8 160 32
+$lblCopied = New-Label '' 380 14 560 22
+$pnlCred.Controls.Add($btnCredPdf); $pnlCred.Controls.Add($btnCredOpen); $pnlCred.Controls.Add($lblCopied)
 
 $grid = New-Object System.Windows.Forms.DataGridView
 $grid.Dock = 'Fill'
@@ -565,6 +566,84 @@ foreach ($c in @(@('System', 34), @('Address', 26), @('Username', 22), @('Passwo
 # Dock order: Top and Bottom first, Fill last
 $tabCred.Controls.Add($grid); $tabCred.Controls.Add($pnlCred); $tabCred.Controls.Add($lblCredTop)
 $grid.BringToFront()
+
+# Web portals (https addresses for the course) as browser bookmarks, via per-user browser policies.
+# Chrome and Edge show them as a managed folder on the bookmarks bar; Firefox on the toolbar. No admin rights needed.
+function Get-PortalLinks {
+    $code = Get-SelectedCourse
+    $links = @(); $seen = @{}
+    foreach ($r in (Get-CourseValue $Content.credentials $code)) {
+        $a = [string]$r.address
+        if ($a -match '^https?://' -and -not $seen[$a]) {
+            $seen[$a] = $true
+            $n = ([string]$r.system) -replace '\s*\(Gaia Portal\)\s*', ''
+            $links += [pscustomobject]@{ Name = "Gaia - $n"; Url = $a }
+        }
+    }
+    foreach ($b in (Get-CourseValue $Content.bookmarks $code)) {
+        if ($b.url -and -not $seen[[string]$b.url]) { $seen[[string]$b.url] = $true; $links += [pscustomobject]@{ Name = [string]$b.name; Url = [string]$b.url } }
+    }
+    return $links
+}
+# Browser policy keys are read-only for normal processes, so the bookmarks are written as machine policies
+# through a WinRM session to A-GUI itself as the lab Admin (always elevated, no UAC prompt).
+$SetBookmarkPolicies = {
+    param([string]$Json, [object[]]$Links, [string]$Folder)
+    function Set-RegValue([string]$Path, [string]$Name, $Value, [string]$Type) {
+        if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+        New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+    }
+    Set-RegValue 'HKLM:\SOFTWARE\Policies\Google\Chrome' 'ManagedBookmarks' $Json 'String'
+    Set-RegValue 'HKLM:\SOFTWARE\Policies\Google\Chrome' 'BookmarkBarEnabled' 1 'DWord'
+    Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'ManagedFavorites' $Json 'String'
+    Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'FavoritesBarEnabled' 1 'DWord'
+    $ff = 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox'
+    if (Test-Path "$ff\Bookmarks") { Remove-Item "$ff\Bookmarks" -Recurse -Force }
+    $i = 1
+    foreach ($l in $Links) {
+        $k = "$ff\Bookmarks\$i"
+        Set-RegValue $k 'Title' ([string]$l.Name) 'String'
+        Set-RegValue $k 'URL' ([string]$l.Url) 'String'
+        Set-RegValue $k 'Folder' $Folder 'String'
+        Set-RegValue $k 'Placement' 'toolbar' 'String'
+        $i++
+    }
+    Set-RegValue $ff 'DisplayBookmarksToolbar' 'always' 'String'
+}
+function Set-BrowserBookmarks {
+    $code = Get-SelectedCourse
+    if (-not $code) { return 0 }
+    $links = @(Get-PortalLinks)
+    if ($links.Count -eq 0) { return 0 }
+    $folder = "Lab - $code"
+    $items = @([pscustomobject]@{ toplevel_name = $folder })
+    foreach ($l in $links) { $items += [pscustomobject]@{ name = $l.Name; url = $l.Url } }
+    $json = ConvertTo-Json -InputObject $items -Compress -Depth 4
+    $plain = @($links | ForEach-Object { @{ Name = $_.Name; Url = $_.Url } })
+    # The lab domain admin can open an elevated WinRM session to A-GUI (local accounts are refused); same account as changes.ps1
+    $sec = ConvertTo-SecureString $LabPassword -AsPlainText -Force
+    $lastErr = $null
+    foreach ($u in 'ALPHA\Administrator', $LabUser) {
+        try {
+            $cred = New-Object System.Management.Automation.PSCredential ($u, $sec)
+            Invoke-Command -ComputerName 'localhost' -Credential $cred -ScriptBlock $SetBookmarkPolicies -ArgumentList $json, $plain, $folder -ErrorAction Stop
+            return $links.Count
+        } catch { $lastErr = $_ }
+    }
+    throw $lastErr
+}
+function Update-Bookmarks {
+    try {
+        $n = Set-BrowserBookmarks
+        if ($n -gt 0) { $lblCopied.Text = "$n web portals are in the browser bookmarks (folder 'Lab - $(Get-SelectedCourse)'). Restart an open browser to see them." }
+    } catch { $lblCopied.Text = "Could not add the browser bookmarks: $($_.Exception.Message)" }
+}
+$btnCredOpen.Add_Click({
+    $url = $null
+    if ($grid.CurrentCell) { $url = [string]$grid.Rows[$grid.CurrentCell.RowIndex].Cells[1].Value }
+    if ($url -match '^https?://') { try { Start-Process $url } catch {} }
+    else { $lblCopied.Text = 'Click a row with an https:// address first (the Gaia Portal rows).' }
+})
 
 function Fill-Credentials {
     $grid.Rows.Clear()
@@ -808,8 +887,8 @@ $GaiaHostWorker = {
     function Write-Out([string]$text) {
         if (-not $text) { return }
         $lines = @($text -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notmatch 'Keyboard-interactive|Using username|Pre-authentication banner|End of banner' })
-        foreach ($l in ($lines | Select-Object -First 15)) { Log ('    ' + $l.TrimEnd()) }
-        if ($lines.Count -gt 15) { Log "    ... ($($lines.Count - 15) more lines)" }
+        foreach ($l in ($lines | Select-Object -First 80)) { Log ('    ' + $l.TrimEnd()) }
+        if ($lines.Count -gt 80) { Log "    ... ($($lines.Count - 80) more lines)" }
     }
 
     try {
@@ -1065,6 +1144,7 @@ $cbCourse.Add_SelectedIndexChanged({
     $code = Get-SelectedCourse
     if ($code) { try { Set-Content -Path $CourseFile -Value $code -Encoding ASCII } catch {} }
     Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras; Fill-Gaia
+    Update-Bookmarks
 })
 $btnRefresh.Add_Click({ Set-Busy $true; $script:Content = Get-LabContent; Fill-All; Set-Busy $false })
 
@@ -1087,6 +1167,7 @@ $tabLoc.Add_Resize({ Fit-Tabs }); $tabChk.Add_Resize({ Fit-Tabs }); $form.Add_Re
 
 $form.Add_Shown({
     Fit-Tabs
+    Update-Bookmarks
     try { $splitGaia.SplitterDistance = [int]($splitGaia.Width * 0.52) } catch {}
     $form.TopMost = $true; $form.Activate(); $form.TopMost = $false
     Show-LocaliseStatus -Quiet $true

@@ -35,6 +35,7 @@ Tabs 2 to 5 are filled from **`content.json`** (cached on A-GUI in case the down
 
 ## Status
 
+- **v0.6.0**: web portal bookmarks: when a course is chosen (and at every start), the https addresses from its credentials list are added to Chrome, Edge and Firefox as a 'Lab - <course>' folder on the bookmarks bar. Written as machine browser policies through a WinRM session to A-GUI itself as ALPHA\\Administrator (no UAC prompt). Extra links per course: `bookmarks` in content.json. 'Open web address' button on tab 3. More Gaia commands (show version all, hcp -r all, show cluster state, show security-gateway policy, show route); command output up to 80 lines. Extras can run elevated / in PowerShell 7. Localise moves en-US to second place in the Windows language list (winget was falling back to French).
 - **v0.5.0**: tab 7 Gaia commands (replaces Plink-Automation, which hung on interactive clish sessions). Tested 10 Nov 2026 on clish and bash hosts.
 - **v0.4.0**: tab 6 Extras.
 - **v0.3.0**: 31 countries plus a keyboard choice (values checked against the original `changes.ps1` menus). The runner adds a `custom` case to the SkillableMods preset block and calls `changes.ps1 'RDP-HOST' 'custom' <winKbd> <gaiaKbd> <winTz> <region> <zone>`. `go.ps1` pins the latest commit so new versions load at once. Tested in a CCSE lab on 10 Nov 2026 (Ireland): Gaia hosts set to Europe/Dublin, A-GUI restarted and Lab Start reopened by itself showing Done.
