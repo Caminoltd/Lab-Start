@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "checklist": [
+    {
+      "text": "Set keyboard and timezone (tab 1, Localise)",
+      "detail": "Choose your country and click Apply. The Windows VMs, including A-GUI, restart about a minute later."
+    },
+    {
+      "text": "Wait for the VMs to restart (3 to 5 minutes)",
+      "detail": "Log back in to A-GUI when its login screen returns. The Gaia VMs restart too."
+    },
+    {
+      "text": "Open Lab Start again and click Check status",
+      "detail": "Use the Lab Start shortcut on the desktop. The Localise tab should say Done."
+    },
+    {
+      "text": "Note the logins and IP addresses (tab 3)",
+      "detail": "Double-click any value to copy it. The full list is on page 3 of each lab guide."
+    },
+    {
+      "text": "Look through the Check Point Tools folder (tab 4)",
+      "detail": "It holds the tools the labs use."
+    },
+    {
+      "text": "Read the lab notes (tab 5)",
+      "detail": "Corrections and tips for steps that catch people out."
+    },
+    {
+      "text": "Start Lab 1A",
+      "detail": ""
+    }
+  ],
+  "credentials": [
+    { "system": "A-GUI (Windows)",    "address": "10.1.1.201", "username": "Admin", "password": "Chkp!234", "notes": "This machine" },
+    { "system": "RDP-HOST (Windows)", "address": "10.1.1.230", "username": "Admin", "password": "Chkp!234", "notes": "Jump host. Settings are applied from here." },
+    { "system": "Gaia (management and gateways)", "address": "see lab guide page 3", "username": "admin", "password": "Chkp!234", "notes": "Expert mode password: Chkp!234" }
+  ],
+  "tools": {
+    "*SmartConsole*": "Check Point SmartConsole - the management GUI used in most labs.",
+    "*MobaXterm*": "SSH client for connecting to the Gaia command line.",
+    "*PuTTY*": "SSH client for connecting to the Gaia command line.",
+    "*WinSCP*": "Copies files to and from the Gaia VMs over SSH.",
+    "*Wireshark*": "Packet capture viewer."
+  },
+  "notes": [
+    "Ignore any lab steps that use Hyper-V Manager.",
+    "Use the RDP-HOST connection rather than the console view for a better screen, clipboard and keyboard."
+  ]
+}
