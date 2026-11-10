@@ -38,7 +38,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.3.0'
+$Version         = '0.4.0'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -716,13 +716,65 @@ $btnCoursePage.Add_Click({
 })
 $btnPrepPage.Add_Click({ try { Start-Process ((Get-SiteUrl) + '/lab-preparation/') } catch {} })
 
+# ---- Tab 6: Extras ------------------------------------------------------------
+$tabExtras = New-Object System.Windows.Forms.TabPage
+$tabExtras.Text = '6. Extras'
+$tabExtras.Padding = New-Object System.Windows.Forms.Padding(12)
+$tabs.TabPages.Add($tabExtras)
+
+$lblExtrasTop = New-Label 'Optional tools that install or tidy things on A-GUI. Each one opens in its own PowerShell window. Select a tool and click Run (or double-click it).' 0 0 10 44
+$lblExtrasTop.Dock = 'Top'
+$pnlExtras = New-Object System.Windows.Forms.Panel
+$pnlExtras.Dock = 'Bottom'; $pnlExtras.Height = 44
+$btnExtraRun = New-Button 'Run selected tool' 0 8 180 32
+$lblExtraMsg = New-Label '' 194 14 700 22
+$pnlExtras.Controls.Add($btnExtraRun); $pnlExtras.Controls.Add($lblExtraMsg)
+
+$lvExtras = New-Object System.Windows.Forms.ListView
+$lvExtras.Dock = 'Fill'
+$lvExtras.View = 'Details'; $lvExtras.FullRowSelect = $true; $lvExtras.MultiSelect = $false
+[void]$lvExtras.Columns.Add('Tool', 260)
+[void]$lvExtras.Columns.Add('What it does', 640)
+$tabExtras.Controls.Add($lvExtras); $tabExtras.Controls.Add($pnlExtras); $tabExtras.Controls.Add($lblExtrasTop)
+$lvExtras.BringToFront()
+
+function Fill-Extras {
+    $lvExtras.Items.Clear()
+    foreach ($x in (Get-CourseValue $Content.extras (Get-SelectedCourse))) {
+        $it = New-Object System.Windows.Forms.ListViewItem([string]$x.name)
+        [void]$it.SubItems.Add([string]$x.desc)
+        $it.Tag = $x
+        [void]$lvExtras.Items.Add($it)
+    }
+    if ($lvExtras.Items.Count -eq 0) {
+        $it = New-Object System.Windows.Forms.ListViewItem('(none)')
+        [void]$it.SubItems.Add('No extra tools are listed for this course.')
+        [void]$lvExtras.Items.Add($it)
+    }
+}
+function Invoke-Extra {
+    if ($lvExtras.SelectedItems.Count -eq 0 -or -not $lvExtras.SelectedItems[0].Tag) { $lblExtraMsg.Text = 'Select a tool first.'; return }
+    $x = $lvExtras.SelectedItems[0].Tag
+    $q = "Run '$($x.name)'?`r`n`r`n$($x.desc)"
+    if ($x.note) { $q += "`r`n`r`n$($x.note)" }
+    if ([System.Windows.Forms.MessageBox]::Show($q, 'Lab Start - Extras', 'YesNo', 'Question') -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    $title = ([string]$x.name) -replace "'", ''
+    $cmd = "`$Host.UI.RawUI.WindowTitle = 'Lab Start extra: $title'; try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}; " + [string]$x.command
+    try {
+        Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList @('-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $cmd) | Out-Null
+        $lblExtraMsg.Text = "Started: $($x.name) (see its PowerShell window)"
+    } catch { $lblExtraMsg.Text = "Could not start: $($_.Exception.Message)" }
+}
+$btnExtraRun.Add_Click({ Invoke-Extra })
+$lvExtras.Add_DoubleClick({ Invoke-Extra })
+
 # ---- Wiring -----------------------------------------------------------------
-function Fill-All { Fill-Courses; Fill-Localise; Fill-Checklist; Fill-Credentials; Fill-Tools; Fill-Notes }
+function Fill-All { Fill-Courses; Fill-Localise; Fill-Checklist; Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras }
 $cbCourse.Add_SelectedIndexChanged({
     if ($script:FillingCourses) { return }
     $code = Get-SelectedCourse
     if ($code) { try { Set-Content -Path $CourseFile -Value $code -Encoding ASCII } catch {} }
-    Fill-Credentials; Fill-Tools; Fill-Notes
+    Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras
 })
 $btnRefresh.Add_Click({ Set-Busy $true; $script:Content = Get-LabContent; Fill-All; Set-Busy $false })
 

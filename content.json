@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "site": "https://caminoltd.github.io",
   "courses": [
     {
@@ -742,6 +742,28 @@
       "Lab 1: A-SMS-02 is already running. Its Gaia Portal is https://10.1.1.111",
       "Save your lab at the end of each day. Saving suspends the VMs and stops the countdown clock until you Launch (resume) the lab again.",
       "For the full CCSE lab notes with page references, and the lab topology, click the course page button above."
+    ]
+  },
+  "extras": {
+    "default": [
+      {
+        "name": "MobaXterm setup",
+        "desc": "Installs MobaXterm and adds SSH sessions for all the lab VMs to its bookmarks.",
+        "command": "irm https://raw.githubusercontent.com/Don-Paterson/MobaXterm-Setup/main/run-mobaxterm-setup.ps1 | iex",
+        "note": "Takes a minute or two. MobaXterm opens briefly while it is set up."
+      },
+      {
+        "name": "SmartConsole cleanup",
+        "desc": "Removes the old SmartConsole versions from A-GUI and keeps R82. Frees several GB of disk space.",
+        "command": "irm https://raw.githubusercontent.com/Don-Paterson/SmartConsoleCleanup/main/run-cleanup.ps1 | iex",
+        "note": "Approve the Windows admin (UAC) prompt when it appears. Takes about 2 minutes."
+      },
+      {
+        "name": "Plink automation",
+        "desc": "Runs Gaia clish commands on several lab hosts at once (unlock database, bash shell, longer inactivity timeout, save config).",
+        "command": "irm https://raw.githubusercontent.com/Don-Paterson/Plink-Automation/main/Automation-Commands-Plink.ps1 | iex",
+        "note": "Opens its own window: tick the hosts and commands, then click Run."
+      }
     ]
   }
 }
