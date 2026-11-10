@@ -38,7 +38,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.5.0'
+$Version         = '0.5.1'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -181,6 +181,15 @@ try {
             $code = $code.Substring(0, $j) + $custom + $code.Substring($j)
             Set-Content -Path $cs -Value $code -Encoding UTF8
             Write-Log 'Added the Lab Start custom preset to changes.ps1'
+        }
+        # Put en-US second in the Windows language list (same keyboards, new order), so programs without
+        # a British English translation (e.g. winget) fall back to English instead of French.
+        $code = Get-Content -Raw -Path $cs
+        $oldList = 'da, nl-NL, nb, en-GB, fi, fr-FR, fr-CH, de-DE, de-CH, it-IT, pl, pt-PT, ru, es-ES, sv-SE, it-CH, tr, en-US'
+        $newList = 'en-US, da, nl-NL, nb, en-GB, fi, fr-FR, fr-CH, de-DE, de-CH, it-IT, pl, pt-PT, ru, es-ES, sv-SE, it-CH, tr'
+        if ($code.Contains($oldList)) {
+            Set-Content -Path $cs -Value $code.Replace($oldList, $newList) -Encoding UTF8
+            Write-Log 'Moved en-US to second place in the Windows language list'
         }
         $label = $(if ($parts.Count -ge 7) { $parts[6] } else { 'custom' })
         Set-Status 'running' "Applying $label to all lab VMs (the Windows VMs restart)"
@@ -761,7 +770,11 @@ function Invoke-Extra {
     $title = ([string]$x.name) -replace "'", ''
     $cmd = "`$Host.UI.RawUI.WindowTitle = 'Lab Start extra: $title'; try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}; " + [string]$x.command
     try {
-        Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList @('-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $cmd) | Out-Null
+        $exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+        if ($x.shell -eq 'pwsh') { $pw7 = Get-Command pwsh.exe -ErrorAction SilentlyContinue; if ($pw7) { $exe = $pw7.Source } }
+        $sp = @{ FilePath = $exe; ArgumentList = @('-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $cmd) }
+        if ($x.elevated) { $sp.Verb = 'RunAs' }   # one admin (UAC) prompt, unless Lab Start itself is already elevated
+        Start-Process @sp | Out-Null
         $lblExtraMsg.Text = "Started: $($x.name) (see its PowerShell window)"
     } catch { $lblExtraMsg.Text = "Could not start: $($_.Exception.Message)" }
 }
