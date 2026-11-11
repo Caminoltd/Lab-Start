@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.1.0'
+$EngineVersion = '1.1.3'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -124,8 +124,52 @@ $WindowsApply = {
 if exist c:\scripts\local_changes.ps1 start /MIN PowerShell.exe -NoProfile -ExecutionPolicy Bypass -Command "& c:\scripts\local_changes.ps1"'
     }
     $tzNow = (Get-TimeZone).Id
-    if ($DoReboot) { & shutdown.exe /r /t $Delay /c 'Lab Start: applying keyboard and time zone' | Out-Null }
-    return "$env:COMPUTERNAME|time zone now $tzNow" + $(if ($DoReboot) { ', restarting' } else { '' })
+    $extra = ''
+    if ($DoReboot) { & shutdown.exe /r /t $Delay /c 'Lab Start: applying keyboard and time zone' | Out-Null; $extra = ', restarting' }
+    else {
+        # No restart: run the logon script now inside every session that is already logged on (a task for the
+        # Users group runs in each logged-on user's session), so the keyboard changes without logging off.
+        # The script sets the language list and also switches the active keyboard of the open session (the same
+        # as picking it from the taskbar), because an unchanged list does not refresh a session that is already open.
+        try {
+            $dir = 'C:\scripts\LabStart'
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $logS = Join-Path $dir 'session_keyboard.log'
+            $langList = ($Langs | ForEach-Object { "'$_'" }) -join ', '
+            $sess = @(
+                "`$ErrorActionPreference = 'SilentlyContinue'",
+                "Set-WinUserLanguageList -LanguageList $langList -Force -WarningAction SilentlyContinue",
+                "`$tip = @((Get-WinUserLanguageList)[0].InputMethodTips)[0]",
+                "`$klid = (`$tip -split ':')[-1]",
+                "Add-Type -Namespace LabStart -Name Kbd -MemberDefinition '[DllImport(""user32.dll"")] public static extern IntPtr LoadKeyboardLayout(string id, uint flags); [DllImport(""user32.dll"")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); [DllImport(""user32.dll"")] public static extern bool SystemParametersInfo(uint a, uint b, ref IntPtr c, uint d); [DllImport(""user32.dll"")] public static extern IntPtr FindWindow(string c, string w); [DllImport(""user32.dll"")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p); [DllImport(""user32.dll"")] public static extern IntPtr GetKeyboardLayout(uint t);'",
+                "`$h = [LabStart.Kbd]::LoadKeyboardLayout(`$klid, 1)",
+                "[void][LabStart.Kbd]::SystemParametersInfo(0x5A, 0, [ref]`$h, 2)",
+                "[void][LabStart.Kbd]::PostMessage([IntPtr]0xffff, 0x50, [IntPtr]::Zero, `$h)",
+                "`$want = [Convert]::ToInt32(`$klid.Substring(4), 16)",
+                "function Get-TrayLang { `$t = [LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null); if (`$t -eq [IntPtr]::Zero) { return -1 }; `$p = 0; `$tid = [LabStart.Kbd]::GetWindowThreadProcessId(`$t, [ref]`$p); return ([LabStart.Kbd]::GetKeyboardLayout(`$tid).ToInt64() -band 0xFFFF) }",
+                "Start-Sleep -Milliseconds 800",
+                "`$how = 'switched'",
+                "`$cur = Get-TrayLang",
+                "if (`$cur -ne -1 -and `$cur -ne `$want) { [void][LabStart.Kbd]::PostMessage([LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null), 0x50, [IntPtr]::Zero, `$h); Start-Sleep -Milliseconds 800; `$cur = Get-TrayLang; `$how = 'taskbar' }",
+                "if (`$cur -ne -1 -and `$cur -ne `$want) { Get-Process explorer -ErrorAction SilentlyContinue | Where-Object { `$_.SessionId -eq (Get-Process -Id `$PID).SessionId } | Stop-Process -Force; Start-Sleep -Seconds 2; if (-not (Get-Process explorer -ErrorAction SilentlyContinue | Where-Object { `$_.SessionId -eq (Get-Process -Id `$PID).SessionId })) { Start-Process explorer.exe }; `$how = 'explorer restarted' }",
+                "try { Add-Content -Path '$logS' -Value ((Get-Date -Format s) + ' ' + `$env:USERDOMAIN + '\' + `$env:USERNAME + ' ' + `$klid + ' ' + `$how) } catch {}"
+            ) -join "`r`n"
+            $sessFile = Join-Path $dir 'session_keyboard.ps1'
+            Set-Content -Path $sessFile -Value $sess -Encoding Unicode
+            $since = Get-Date
+            $users = ([Security.Principal.SecurityIdentifier]'S-1-5-32-545').Translate([Security.Principal.NTAccount]).Value
+            $tn = 'LabStart-UserLocale'
+            $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$sessFile`""
+            $pri = New-ScheduledTaskPrincipal -GroupId $users -RunLevel Limited
+            Register-ScheduledTask -TaskName $tn -Action $act -Principal $pri -Force | Out-Null
+            Start-ScheduledTask -TaskName $tn
+            Start-Sleep -Seconds 12
+            Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue
+            $n = @(Get-Content $logS -ErrorAction SilentlyContinue | Where-Object { try { [datetime]($_.Substring(0, 19)) -ge $since.AddSeconds(-2) } catch { $false } }).Count
+            $extra = $(if ($n) { ", keyboard switched in $n logged-on session(s)" } else { ', no logged-on session (keyboard applies at log-on)' })
+        } catch { $extra = ', keyboard at next log-on' }
+    }
+    return "$env:COMPUTERNAME|time zone now $tzNow$extra"
 }
 
 # Optimise mode: runs on each Windows VM (and locally on RDP-HOST). Reversible clean-up, no restart.
