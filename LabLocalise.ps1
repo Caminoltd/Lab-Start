@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.1.3'
+$EngineVersion = '1.2.0'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -251,6 +251,92 @@ $WindowsOptimise = {
         $sz = [double](Get-ChildItem $dl -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
         if ($sz -gt 50MB) { Get-ChildItem $dl -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; $did += ('update cache cleared (' + [math]::Round($sz / 1GB, 1) + ' GB)') }
     }
+    # 6. Scheduled tasks that only create background disk and CPU work in a lab (updates and .NET image building are left alone)
+    $tasks = @(
+        @('\Microsoft\Windows\Defrag\', 'ScheduledDefrag'),
+        @('\Microsoft\Windows\Application Experience\', 'Microsoft Compatibility Appraiser'),
+        @('\Microsoft\Windows\Application Experience\', 'ProgramDataUpdater'),
+        @('\Microsoft\Windows\Application Experience\', 'StartupAppTask'),
+        @('\Microsoft\Windows\Customer Experience Improvement Program\', 'Consolidator'),
+        @('\Microsoft\Windows\Customer Experience Improvement Program\', 'UsbCeip'),
+        @('\Microsoft\Windows\Customer Experience Improvement Program\', 'KernelCeipTask'),
+        @('\Microsoft\Windows\DiskDiagnostic\', 'Microsoft-Windows-DiskDiagnosticDataCollector'),
+        @('\Microsoft\Windows\Maintenance\', 'WinSAT'),
+        @('\Microsoft\Windows\Windows Error Reporting\', 'QueueReporting'),
+        @('\Microsoft\Windows\Feedback\Siuf\', 'DmClient'),
+        @('\Microsoft\Windows\Feedback\Siuf\', 'DmClientOnScenarioDownload'),
+        @('\Microsoft\Windows\Maps\', 'MapsUpdateTask'),
+        @('\Microsoft\Windows\Maps\', 'MapsToastTask')
+    )
+    $tOff = 0
+    foreach ($t in $tasks) {
+        $st = Get-ScheduledTask -TaskPath $t[0] -TaskName $t[1] -ErrorAction SilentlyContinue
+        if ($st -and $st.State -ne 'Disabled') { $st | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null; $tOff++ }
+    }
+    if ($tOff) { $did += "$tOff background tasks off (incl. weekly disk optimisation)" }
+    # 7. Hibernation (frees hiberfil.sys), Windows Error Reporting, Print Spooler on servers
+    if (Test-Path 'C:\hiberfil.sys' -ErrorAction SilentlyContinue) { & powercfg.exe /hibernate off 2>$null | Out-Null; $did += 'hibernation off' }
+    $wer = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+    if ((Get-ItemProperty $wer -ErrorAction SilentlyContinue).Disabled -ne 1) {
+        New-Item -Path $wer -Force -ErrorAction SilentlyContinue | Out-Null
+        New-ItemProperty -Path $wer -Name Disabled -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+        $sv = Get-Service WerSvc -ErrorAction SilentlyContinue
+        if ($sv) { Stop-Service WerSvc -Force -ErrorAction SilentlyContinue; Set-Service WerSvc -StartupType Disabled -ErrorAction SilentlyContinue }
+        $did += 'error reporting off'
+    }
+    if ((Get-CimInstance Win32_OperatingSystem).ProductType -ne 1) {
+        $sv = Get-Service Spooler -ErrorAction SilentlyContinue
+        if ($sv -and $sv.StartType -ne 'Disabled') { Stop-Service Spooler -Force -ErrorAction SilentlyContinue; Set-Service Spooler -StartupType Disabled -ErrorAction SilentlyContinue; $did += 'Print Spooler off (server)' }
+    }
+    # 8. Visual effects: best performance for every user (registry for loaded profiles, other profiles and the
+    #    default profile), and switched off at once in the sessions that are logged on now.
+    $vfx = {
+        param([string]$Root)   # e.g. Registry::HKEY_USERS\S-1-5-21-...
+        $set = {
+            param($Path, $Name, $Value, $Type)
+            if (-not (Test-Path $Path)) { New-Item -Path $Path -Force -ErrorAction SilentlyContinue | Out-Null }
+            New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+        & $set "$Root\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" 'VisualFXSetting' 2 'DWord'
+        & $set "$Root\Control Panel\Desktop" 'UserPreferencesMask' ([byte[]](0x90, 0x12, 0x03, 0x80, 0x10, 0x00, 0x00, 0x00)) 'Binary'
+        & $set "$Root\Control Panel\Desktop" 'DragFullWindows' '0' 'String'
+        & $set "$Root\Control Panel\Desktop\WindowMetrics" 'MinAnimate' '0' 'String'
+        & $set "$Root\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" 'TaskbarAnimations' 0 'DWord'
+        & $set "$Root\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" 'ListviewAlphaSelect' 0 'DWord'
+        & $set "$Root\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" 'EnableTransparency' 0 'DWord'
+    }
+    $vu = 0
+    foreach ($h in @(Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-[\d-]+$' })) { & $vfx "Registry::HKEY_USERS\$($h.PSChildName)"; $vu++ }
+    $hives = @(Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue | Where-Object { -not $_.Loaded -and -not $_.Special } | ForEach-Object { Join-Path $_.LocalPath 'NTUSER.DAT' }) + @('C:\Users\Default\NTUSER.DAT')
+    foreach ($f in $hives) {
+        if (-not (Test-Path $f)) { continue }
+        & reg.exe load 'HKU\LabStartVfx' $f 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { continue }
+        & $vfx 'Registry::HKEY_USERS\LabStartVfx'; $vu++
+        [gc]::Collect(); Start-Sleep -Milliseconds 300
+        & reg.exe unload 'HKU\LabStartVfx' 2>$null | Out-Null
+    }
+    try {
+        $dir = 'C:\scripts\LabStart'; New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $vs = @(
+            "Add-Type -Namespace LabStart -Name Vfx -MemberDefinition '[DllImport(""user32.dll"")] public static extern bool SystemParametersInfo(uint a, uint b, IntPtr c, uint d);'",
+            '[void][LabStart.Vfx]::SystemParametersInfo(0x103F, 0, [IntPtr]::Zero, 3)',
+            '[void][LabStart.Vfx]::SystemParametersInfo(0x1043, 0, [IntPtr]::Zero, 3)',
+            '[void][LabStart.Vfx]::SystemParametersInfo(0x0025, 0, [IntPtr]::Zero, 3)',
+            '[void][LabStart.Vfx]::SystemParametersInfo(0x1005, 0, [IntPtr]::Zero, 3)',
+            '[void][LabStart.Vfx]::SystemParametersInfo(0x1013, 0, [IntPtr]::Zero, 3)'
+        ) -join "`r`n"
+        $vf = Join-Path $dir 'session_visual.ps1'
+        Set-Content -Path $vf -Value $vs -Encoding Unicode
+        $users = ([Security.Principal.SecurityIdentifier]'S-1-5-32-545').Translate([Security.Principal.NTAccount]).Value
+        $tn = 'LabStart-UserVisual'
+        Register-ScheduledTask -TaskName $tn -Action (New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$vf`"") -Principal (New-ScheduledTaskPrincipal -GroupId $users -RunLevel Limited) -Force | Out-Null
+        Start-ScheduledTask -TaskName $tn
+        Start-Sleep -Seconds 6
+        Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue
+    } catch {}
+    if ($vu) { $did += "visual effects set to best performance ($vu profiles)" }
+
     if (-not $did.Count) { $did = @('nothing to change') }
     return "$env:COMPUTERNAME|" + ($did -join '; ')
 }
