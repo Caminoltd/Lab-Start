@@ -9,7 +9,7 @@
                              scheduled task, so the student never has to go to RDP-HOST. The lab's own
                              C:\scripts\changes.cmd / changes.ps1 are not used.
       2. Lab checklist     - tick-off steps (ticks saved per user on this VM).
-      3. Credentials & IPs - the lab logins, double-click a cell to copy it; web portals become browser bookmarks.
+      3. Credentials & IPs - the lab logins, double-click a cell to copy it; 'Add browser bookmarks' puts the web portals in the browsers (optional).
       4. Check Point Tools - the course documents and main tools from the desktop "Check Point Tools" folder.
       5. Lab notes         - corrections and tips, links to the course pages.
       6. Extras            - optional tools (MobaXterm setup, SmartConsole cleanup, ...).
@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.7.1'
+$Version         = '0.7.2'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -501,11 +501,13 @@ $tabs.TabPages.Add($tabCred)
 $lblCredTop = New-Label 'Logins and IP addresses for your course. Double-click any cell to copy it. They are also on the 3rd page of every lab in your lab guide.' 0 0 10 44
 $lblCredTop.Dock = 'Top'
 $pnlCred = New-Object System.Windows.Forms.Panel
-$pnlCred.Dock = 'Bottom'; $pnlCred.Height = 44
+$pnlCred.Dock = 'Bottom'; $pnlCred.Height = 72
 $btnCredPdf = New-Button 'Open the full list (PDF)' 0 8 200 32
 $btnCredOpen = New-Button 'Open web address' 208 8 160 32
-$lblCopied = New-Label '' 380 14 560 22
-$pnlCred.Controls.Add($btnCredPdf); $pnlCred.Controls.Add($btnCredOpen); $pnlCred.Controls.Add($lblCopied)
+$btnBmAdd = New-Button 'Add browser bookmarks' 376 8 190 32
+$btnBmRemove = New-Button 'Remove bookmarks' 574 8 160 32
+$lblCopied = New-Label '' 0 46 940 22
+$pnlCred.Controls.Add($btnCredPdf); $pnlCred.Controls.Add($btnCredOpen); $pnlCred.Controls.Add($btnBmAdd); $pnlCred.Controls.Add($btnBmRemove); $pnlCred.Controls.Add($lblCopied)
 
 $grid = New-Object System.Windows.Forms.DataGridView
 $grid.Dock = 'Fill'
@@ -519,8 +521,9 @@ foreach ($c in @(@('System', 34), @('Address', 26), @('Username', 22), @('Passwo
 $tabCred.Controls.Add($grid); $tabCred.Controls.Add($pnlCred); $tabCred.Controls.Add($lblCredTop)
 $grid.BringToFront()
 
-# Web portals (https addresses for the course) as browser bookmarks, via per-user browser policies.
-# Chrome and Edge show them as a managed folder on the bookmarks bar; Firefox on the toolbar. No admin rights needed.
+# Web portals (https addresses for the course) as browser bookmarks - optional, only when the student clicks
+# 'Add browser bookmarks' on tab 3 ('Remove bookmarks' takes them out again). Written as machine browser policies:
+# Chrome and Edge show a managed folder on the bookmarks bar, Firefox a folder on the toolbar.
 function Get-PortalLinks {
     $code = Get-SelectedCourse
     $links = @(); $seen = @{}
@@ -572,24 +575,52 @@ function Set-BrowserBookmarks {
     foreach ($l in $links) { $items += [pscustomobject]@{ name = $l.Name; url = $l.Url } }
     $json = ConvertTo-Json -InputObject $items -Compress -Depth 4
     $plain = @($links | ForEach-Object { @{ Name = $_.Name; Url = $_.Url } })
-    # The lab domain admin can open an elevated WinRM session to A-GUI (local accounts are refused); same account as changes.ps1
+    Invoke-AsLabAdmin $SetBookmarkPolicies @($json, $plain, $folder)
+    return $links.Count
+}
+$RemoveBookmarkPolicies = {
+    foreach ($v in @(@('HKLM:\SOFTWARE\Policies\Google\Chrome', 'ManagedBookmarks'), @('HKLM:\SOFTWARE\Policies\Google\Chrome', 'BookmarkBarEnabled'),
+                     @('HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'ManagedFavorites'), @('HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'FavoritesBarEnabled'),
+                     @('HKLM:\SOFTWARE\Policies\Mozilla\Firefox', 'DisplayBookmarksToolbar'))) {
+        Remove-ItemProperty -Path $v[0] -Name $v[1] -ErrorAction SilentlyContinue
+    }
+    if (Test-Path 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox\Bookmarks') { Remove-Item 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox\Bookmarks' -Recurse -Force }
+    # tidy up policy keys left empty, so the browsers stop saying they are managed
+    foreach ($k in 'HKLM:\SOFTWARE\Policies\Google\Chrome', 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox') {
+        $i = Get-Item $k -ErrorAction SilentlyContinue
+        if ($i -and $i.ValueCount -eq 0 -and $i.SubKeyCount -eq 0) { Remove-Item $k -Force }
+    }
+}
+# Policy keys need an elevated session: the lab domain admin can open one to A-GUI itself over WinRM (local accounts are refused)
+function Invoke-AsLabAdmin([scriptblock]$Script, [object[]]$Arguments = @()) {
     $sec = ConvertTo-SecureString $LabPassword -AsPlainText -Force
     $lastErr = $null
     foreach ($u in 'ALPHA\Administrator', $LabUser) {
         try {
             $cred = New-Object System.Management.Automation.PSCredential ($u, $sec)
-            Invoke-Command -ComputerName 'localhost' -Credential $cred -ScriptBlock $SetBookmarkPolicies -ArgumentList $json, $plain, $folder -ErrorAction Stop
-            return $links.Count
+            Invoke-Command -ComputerName 'localhost' -Credential $cred -ScriptBlock $Script -ArgumentList $Arguments -ErrorAction Stop
+            return
         } catch { $lastErr = $_ }
     }
     throw $lastErr
+}
+function Test-BookmarksAdded {
+    try { return [bool](Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Google\Chrome' -Name ManagedBookmarks -ErrorAction Stop) } catch { return $false }
 }
 function Update-Bookmarks {
     try {
         $n = Set-BrowserBookmarks
         if ($n -gt 0) { $lblCopied.Text = "$n web portals are in the browser bookmarks (folder 'Lab - $(Get-SelectedCourse)'). Restart an open browser to see them." }
+        else { $lblCopied.Text = 'This course has no web portals to add as bookmarks.' }
     } catch { $lblCopied.Text = "Could not add the browser bookmarks: $($_.Exception.Message)" }
 }
+$btnBmAdd.Add_Click({ Set-Busy $true; Update-Bookmarks; Set-Busy $false })
+$btnBmRemove.Add_Click({
+    Set-Busy $true
+    try { Invoke-AsLabAdmin $RemoveBookmarkPolicies; $lblCopied.Text = 'Browser bookmarks removed. Restart an open browser to see the change.' }
+    catch { $lblCopied.Text = "Could not remove the browser bookmarks: $($_.Exception.Message)" }
+    Set-Busy $false
+})
 $btnCredOpen.Add_Click({
     $url = $null
     if ($grid.CurrentCell) { $url = [string]$grid.Rows[$grid.CurrentCell.RowIndex].Cells[1].Value }
@@ -1096,7 +1127,7 @@ $cbCourse.Add_SelectedIndexChanged({
     $code = Get-SelectedCourse
     if ($code) { try { Set-Content -Path $CourseFile -Value $code -Encoding ASCII } catch {} }
     Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras; Fill-Gaia
-    Update-Bookmarks
+    if (Test-BookmarksAdded) { Update-Bookmarks }   # keep bookmarks the student added in step with the course
 })
 $btnRefresh.Add_Click({ Set-Busy $true; $script:Content = Get-LabContent; Fill-All; Set-Busy $false })
 
@@ -1119,7 +1150,6 @@ $tabLoc.Add_Resize({ Fit-Tabs }); $tabChk.Add_Resize({ Fit-Tabs }); $form.Add_Re
 
 $form.Add_Shown({
     Fit-Tabs
-    Update-Bookmarks
     try { $splitGaia.SplitterDistance = [int]($splitGaia.Width * 0.52) } catch {}
     $form.TopMost = $true; $form.Activate(); $form.TopMost = $false
     Show-LocaliseStatus -Quiet $true
