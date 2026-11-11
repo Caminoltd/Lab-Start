@@ -34,7 +34,9 @@ param(
     [string]$GaiaZone        = 'London',
     [string]$Label           = '',
     [string[]]$WindowsHosts  = @('10.1.1.201', '192.168.11.101', '192.168.11.201', '192.168.12.101', '192.168.21.201', '172.31.1.1'),
-    [string[]]$GaiaHosts     = @('10.1.1.2', '10.1.1.3', '10.1.1.4', '10.1.1.101', '10.1.1.111', '10.1.1.103', '10.1.1.130', '10.1.1.1', '198.51.100.1'),
+    [string[]]$GaiaHosts     = @('10.1.1.2', '10.1.1.3', '10.1.1.4', '10.1.1.101', '10.1.1.111', '10.1.1.103', '10.1.1.130', '198.51.100.1'),
+    # cluster addresses (VIPs): done last, and skipped when they answer as a member that is already done
+    [string[]]$LateGaiaHosts = @('10.1.1.1'),
     [string[]]$ExtraLanguages = @('en-US'),
     [string]$Password        = 'Chkp!234',
     [string]$DomainUser      = 'ALPHA\Administrator',
@@ -46,7 +48,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.0.0'
+$EngineVersion = '1.0.1'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -62,6 +64,7 @@ if ($SettingsFile) {
             'label'              { $Label = [string]$p.Value }
             'windowsHosts'       { $WindowsHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'gaiaHosts'          { $GaiaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
+            'gaiaLateHosts'      { $LateGaiaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'extraLanguages'     { $ExtraLanguages = @($p.Value | ForEach-Object { [string]$_ }) }
             'password'           { $Password = [string]$p.Value }
             'domainUser'         { $DomainUser = [string]$p.Value }
@@ -148,7 +151,7 @@ $WindowsWorker = {
 
 # Runs in a background runspace per Gaia host
 $GaiaWorker = {
-    param([string]$Ip, [string]$Pw, [string]$Plink, [string[]]$ScriptLines)
+    param([string]$Ip, [string]$Pw, [string]$Plink, [string[]]$ScriptLines, [string[]]$DoneNames, [bool]$IsLate)
     $res = [ordered]@{ ip = $Ip; kind = 'Gaia'; name = ''; ok = $false; result = ''; output = '' }
     function Q([string]$s) { '"' + ($s -replace '"', '\"') + '"' }
     function Run-Plink([string]$ArgLine, [string]$Stdin, [int]$TimeoutSec) {
@@ -172,15 +175,29 @@ $GaiaWorker = {
             $up = $ar.AsyncWaitHandle.WaitOne(2500) -and $tcp.Connected
             $tcp.Close()
         } catch {}
-        if (-not $up) { $res.result = 'skipped - not reachable on SSH (switched off?)'; return [pscustomobject]$res }
+        if (-not $up) {
+            if ($IsLate -and @($DoneNames).Count -gt 0) { $res.result = 'not needed - cluster address, not answering while the members restart' }
+            else { $res.result = 'skipped - not reachable on SSH (switched off?)' }
+            return [pscustomobject]$res
+        }
         $base = "-ssh -l admin -pw " + (Q $Pw) + " $Ip"
         # accept the host key (PuTTY 0.72 reads the answer from stdin when not run with -batch)
         $r = Run-Plink "$base exit" "y`n" 25
         if ($r.Out -match 'Access denied') { $res.result = 'failed: login refused'; return [pscustomobject]$res }
         # which login shell?
-        $r = Run-Plink ("-batch $base " + (Q 'echo LSMARK_$((6*7))')) $null 25
+        $r = Run-Plink ("-batch $base " + (Q 'echo LSMARK_$((6*7)) HN_$(hostname)')) $null 25
         if ($r.TimedOut) { $res.result = 'failed: no answer over SSH'; return [pscustomobject]$res }
-        if ($r.Out -notmatch 'LSMARK_42') {
+        $isBash = $r.Out -match 'LSMARK_42'
+        if ($isBash) { if ($r.Out -match 'HN_(\S+)') { $res.name = $Matches[1] } }
+        else {
+            $h = Run-Plink ("-batch $base " + (Q 'show hostname')) $null 25
+            $line = @($h.Out -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notmatch 'Keyboard-interactive|Using username|banner|CLINFR' } | Select-Object -Last 1)
+            if ($line) { $res.name = "$($line[0])".Trim() }
+        }
+        if ($IsLate -and $res.name -and (@($DoneNames) -contains $res.name)) {
+            $res.result = "not needed - cluster address, answered as $($res.name) (already done)"; return [pscustomobject]$res
+        }
+        if (-not $isBash) {
             # clish login shell: unlock the database and switch to bash for the expert-mode keyboard commands
             [void](Run-Plink ("-batch $base " + (Q 'lock database override')) $null 45)
             [void](Run-Plink ("-batch $base " + (Q 'set user admin shell /bin/bash')) $null 45)
@@ -236,16 +253,26 @@ try {
         $jobs += [pscustomobject]@{ Key = "win:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
         $script:HostResults["win:$ip"] = [pscustomobject]@{ ip = $ip; kind = 'Windows'; name = ''; ok = $false; result = 'working' }
     }
-    foreach ($ip in $GaiaHosts) {
+    $LateGaiaHosts = @($LateGaiaHosts | Where-Object { $_ -and ($GaiaHosts -notcontains $_) })
+    if (-not (Test-Path $PlinkPath)) { $LateGaiaHosts = @() }
+    $startGaia = {
+        param([string]$ip, [string[]]$doneNames, [bool]$late)
         $ps = [powershell]::Create(); $ps.RunspacePool = $pool
-        [void]$ps.AddScript($GaiaWorker).AddArgument($ip).AddArgument($Password).AddArgument($PlinkPath).AddArgument([string[]]$gaiaLines)
-        $jobs += [pscustomobject]@{ Key = "gaia:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
+        [void]$ps.AddScript($GaiaWorker).AddArgument($ip).AddArgument($Password).AddArgument($PlinkPath).AddArgument([string[]]$gaiaLines).AddArgument([string[]]$doneNames).AddArgument($late)
         $script:HostResults["gaia:$ip"] = [pscustomobject]@{ ip = $ip; kind = 'Gaia'; name = ''; ok = $false; result = 'working' }
+        [pscustomobject]@{ Key = "gaia:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false; Late = $late }
     }
-    Set-Status 'running' "Applying to $($WindowsHosts.Count) Windows VMs and $($GaiaHosts.Count) Gaia hosts"
+    foreach ($ip in $GaiaHosts) { $jobs += & $startGaia $ip @() $false }
+    $lateStarted = ($LateGaiaHosts.Count -eq 0)
+    Set-Status 'running' "Applying to $($WindowsHosts.Count) Windows VMs and $($GaiaHosts.Count + $LateGaiaHosts.Count) Gaia hosts"
 
     $deadline = (Get-Date).AddMinutes(8)
-    while (@($jobs | Where-Object { -not $_.Done }).Count -gt 0 -and (Get-Date) -lt $deadline) {
+    while ((-not $lateStarted -or @($jobs | Where-Object { -not $_.Done }).Count -gt 0) -and (Get-Date) -lt $deadline) {
+        if (-not $lateStarted -and @($jobs | Where-Object { $_.Key -like 'gaia:*' -and -not $_.Done }).Count -eq 0) {
+            $lateStarted = $true
+            $doneNames = @($script:HostResults.Values | Where-Object { $_.kind -eq 'Gaia' -and $_.ok -and $_.name } | ForEach-Object { [string]$_.name })
+            foreach ($ip in $LateGaiaHosts) { $jobs += & $startGaia $ip $doneNames $true }
+        }
         foreach ($j in ($jobs | Where-Object { -not $_.Done -and $_.Handle.IsCompleted })) {
             $j.Done = $true
             try { $r = @($j.PS.EndInvoke($j.Handle))[0] } catch { $r = [pscustomobject]@{ ip = $j.Ip; kind = '?'; ok = $false; result = 'failed: ' + $_.Exception.Message } }
@@ -265,7 +292,8 @@ try {
     $all = @($script:HostResults.Values)
     $ok = @($all | Where-Object { $_.ok }).Count
     $skipped = @($all | Where-Object { $_.result -like 'skipped*' }).Count
-    $failed = $all.Count - $ok - $skipped
+    $notNeeded = @($all | Where-Object { $_.result -like 'not needed*' }).Count
+    $failed = $all.Count - $ok - $skipped - $notNeeded
     $summary = "$ok done, $skipped switched off" + $(if ($failed) { ", $failed failed" } else { '' })
     Write-Log "Finished: $summary"
     if ($skipped) {

@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.7.2'
+$Version         = '0.7.3'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -591,18 +591,33 @@ $RemoveBookmarkPolicies = {
         if ($i -and $i.ValueCount -eq 0 -and $i.SubKeyCount -eq 0) { Remove-Item $k -Force }
     }
 }
-# Policy keys need an elevated session: the lab domain admin can open one to A-GUI itself over WinRM (local accounts are refused)
+# Policy keys need an elevated session on A-GUI. A-GUI refuses WinRM sessions to itself in some labs (CCSA, Nov 2026),
+# so the session goes out to RDP-HOST and back in to A-GUI as its local Admin (elevated remotely: LocalAccountTokenFilterPolicy=1).
+# Fallback: a WinRM session from A-GUI to itself as the lab domain admin (works in the CCSE lab).
+$RunOnAGui = {
+    param([string]$ScriptText, [object[]]$Arguments, [string]$Target, [string]$User, [string]$Password)
+    $cred = New-Object System.Management.Automation.PSCredential ($User, (ConvertTo-SecureString $Password -AsPlainText -Force))
+    Invoke-Command -ComputerName $Target -Credential $cred -ScriptBlock ([scriptblock]::Create($ScriptText)) -ArgumentList $Arguments -ErrorAction Stop
+}
+function Get-AGuiAddress {
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -like '10.1.1.*' } | Select-Object -First 1
+    if ($ip) { return $ip.IPAddress } else { return '10.1.1.201' }
+}
 function Invoke-AsLabAdmin([scriptblock]$Script, [object[]]$Arguments = @()) {
+    $errs = @()
+    try {
+        Invoke-OnRdpHost -ScriptBlock $RunOnAGui -Arguments @($Script.ToString(), $Arguments, (Get-AGuiAddress), "$env:COMPUTERNAME\$LabUser", $LabPassword)
+        return
+    } catch { $errs += "via RDP-HOST: $($_.Exception.Message)" }
     $sec = ConvertTo-SecureString $LabPassword -AsPlainText -Force
-    $lastErr = $null
     foreach ($u in 'ALPHA\Administrator', $LabUser) {
         try {
             $cred = New-Object System.Management.Automation.PSCredential ($u, $sec)
             Invoke-Command -ComputerName 'localhost' -Credential $cred -ScriptBlock $Script -ArgumentList $Arguments -ErrorAction Stop
             return
-        } catch { $lastErr = $_ }
+        } catch { $errs += "as ${u}: $($_.Exception.Message)" }
     }
-    throw $lastErr
+    throw ($errs -join ' | ')
 }
 function Test-BookmarksAdded {
     try { return [bool](Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Google\Chrome' -Name ManagedBookmarks -ErrorAction Stop) } catch { return $false }
