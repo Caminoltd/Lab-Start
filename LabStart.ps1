@@ -4,13 +4,16 @@
 
 .DESCRIPTION
     One window with tabs:
-      1. Localise          - applies keyboard + timezone to every lab VM by running the lab's own
-                             C:\scripts\changes.ps1 on RDP-HOST (via a one-off scheduled task there),
-                             so the student never has to go to RDP-HOST.
+      1. Localise          - applies keyboard + time zone to every lab VM: copies LabLocalise.ps1 (the
+                             localisation engine in this repo) to RDP-HOST and runs it there as a one-off
+                             scheduled task, so the student never has to go to RDP-HOST. The lab's own
+                             C:\scripts\changes.cmd / changes.ps1 are not used.
       2. Lab checklist     - tick-off steps (ticks saved per user on this VM).
-      3. Credentials & IPs - the lab logins, double-click a cell to copy it.
-      4. Check Point Tools - what is in the desktop "Check Point Tools" folder and what each item is for.
-      5. Lab notes         - corrections and tips for the labs.
+      3. Credentials & IPs - the lab logins, double-click a cell to copy it; web portals become browser bookmarks.
+      4. Check Point Tools - the course documents and main tools from the desktop "Check Point Tools" folder.
+      5. Lab notes         - corrections and tips, links to the course pages.
+      6. Extras            - optional tools (MobaXterm setup, SmartConsole cleanup, ...).
+      7. Gaia commands     - run clish / expert commands on several Gaia hosts at once.
 
     Text content (checklist, credentials, tool descriptions, notes) comes from content.json in the repo,
     so it can be edited without touching this script.
@@ -38,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.6.0'
+$Version         = '0.7.1'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -119,10 +122,11 @@ function Invoke-OnRdpHost {
     Invoke-Command -ComputerName $target -Credential (New-LabCredential) -ScriptBlock $ScriptBlock -ArgumentList $Arguments -ErrorAction Stop
 }
 
-# Runs ON RDP-HOST: writes the runner script and starts it as a one-off scheduled task, so the work
-# carries on when A-GUI restarts part-way through.
+# Runs ON RDP-HOST: saves the localisation engine (LabLocalise.ps1) and its settings, then starts it as a
+# one-off scheduled task, so the work carries on when A-GUI restarts part-way through.
+# Nothing from C:\scripts\changes.cmd / changes.ps1 is used.
 $StartLocalise = {
-    param([string]$Preset, [string]$User, [string]$Password)
+    param([string]$EngineText, [string]$SettingsJson, [string]$Label, [string]$User, [string]$Password)
 
     $dir = 'C:\scripts\LabStart'
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -130,95 +134,26 @@ $StartLocalise = {
     $existing = Get-ScheduledTask -TaskName 'LabStart-Localise' -ErrorAction SilentlyContinue
     if ($existing -and "$($existing.State)" -eq 'Running') { return 'already-running' }
 
-    $runner = @'
-param([string]$Preset)
-$dir    = 'C:\scripts\LabStart'
-$log    = Join-Path $dir 'localise.log'
-$status = Join-Path $dir 'status.json'
-try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
-
-function Set-Status([string]$State, [string]$Detail) {
-    [pscustomobject]@{ state = $State; preset = $Preset; detail = $Detail; time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
-        ConvertTo-Json | Set-Content -Path $status -Encoding UTF8
-}
-function Write-Log([string]$Text) { Add-Content -Path $log -Value $Text -Encoding UTF8 }
-
-Set-Content -Path $log -Value ("Lab Start - localise run, preset '{0}', started {1}" -f $Preset, (Get-Date)) -Encoding UTF8
-try {
-    Set-Status 'running' 'Patching the lab scripts'
-    $patcher = Join-Path $dir 'change-lab-uk-v5.ps1'
-    $url = 'https://raw.githubusercontent.com/Don-Paterson/SkillableMods/main/change-lab-uk-v5.ps1?' + (Get-Date -Format 'yyyyMMddHHmmss')
-    (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60).Content | Set-Content -Path $patcher -Encoding UTF8
-    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $patcher -Path 'C:\scripts' 2>&1 | ForEach-Object { Write-Log "$_" }
-    if ($LASTEXITCODE -ne 0) { throw "The patcher stopped with exit code $LASTEXITCODE" }
-
-    # Preset is either a plain name ('uk') or 'custom|winKeyboard|gaiaKeyboard|winTimezone|gaiaRegion|gaiaZone|label'
-    $parts = @($Preset -split '\|')
-    if ($parts.Count -ge 6) {
-        Set-Status 'running' 'Adding the country choice to changes.ps1'
-        $cs = 'C:\scripts\changes.ps1'
-        $code = Get-Content -Raw -Path $cs
-        if ($code -notmatch 'LabStart custom preset') {
-            $sw = 'switch ($Preset) {'
-            $df = "    default { `$Preset = '' }"
-            if ($code.IndexOf($sw) -lt 0 -or $code.IndexOf($df) -lt 0) { throw 'changes.ps1 does not have the expected SkillableMods preset block' }
-            $custom = @"
-    'custom' {
-        # LabStart custom preset
-        `$WindowsLanguageTag = `$LSArgs[2]
-        `$GAIALanguageTag    = `$LSArgs[3]
-        `$WindowsTimezone    = `$LSArgs[4]
-        `$GAIAregion         = `$LSArgs[5]
-        `$GAIAzone           = `$LSArgs[6]
-        Write-Host ''
-        Write-Host "      [Lab Start] Keyboard `$WindowsLanguageTag / `$GAIALanguageTag, time zone `$WindowsTimezone / `$GAIAregion/`$GAIAzone - skipping menus." -ForegroundColor Green
-        Write-Host ''
-    }
-"@
-            $i = $code.IndexOf($sw)
-            $code = $code.Substring(0, $i) + "`$LSArgs = @(`$args)`r`n" + $code.Substring($i)
-            $j = $code.IndexOf($df)
-            $code = $code.Substring(0, $j) + $custom + $code.Substring($j)
-            Set-Content -Path $cs -Value $code -Encoding UTF8
-            Write-Log 'Added the Lab Start custom preset to changes.ps1'
-        }
-        # Put en-US second in the Windows language list (same keyboards, new order), so programs without
-        # a British English translation (e.g. winget) fall back to English instead of French.
-        $code = Get-Content -Raw -Path $cs
-        $oldList = 'da, nl-NL, nb, en-GB, fi, fr-FR, fr-CH, de-DE, de-CH, it-IT, pl, pt-PT, ru, es-ES, sv-SE, it-CH, tr, en-US'
-        $newList = 'en-US, da, nl-NL, nb, en-GB, fi, fr-FR, fr-CH, de-DE, de-CH, it-IT, pl, pt-PT, ru, es-ES, sv-SE, it-CH, tr'
-        if ($code.Contains($oldList)) {
-            Set-Content -Path $cs -Value $code.Replace($oldList, $newList) -Encoding UTF8
-            Write-Log 'Moved en-US to second place in the Windows language list'
-        }
-        $label = $(if ($parts.Count -ge 7) { $parts[6] } else { 'custom' })
-        Set-Status 'running' "Applying $label to all lab VMs (the Windows VMs restart)"
-        $cmd = "& 'C:\scripts\changes.ps1' 'RDP-HOST' 'custom' '{0}' '{1}' '{2}' '{3}' '{4}'" -f $parts[1], $parts[2], $parts[3], $parts[4], $parts[5]
-    } else {
-        Set-Status 'running' 'Applying keyboard and timezone to all lab VMs (the Windows VMs restart)'
-        $cmd = "& 'C:\scripts\changes.ps1' 'RDP-HOST' '$Preset'"
-    }
-    Write-Log "Running: $cmd"
-    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $cmd 2>&1 | ForEach-Object { Write-Log "$_" }
-    Set-Status 'done' ('Finished at ' + (Get-Date -Format 'HH:mm'))
-}
-catch {
-    Write-Log ('ERROR: ' + $_.Exception.Message)
-    Set-Status 'failed' $_.Exception.Message
-}
-'@
-    Set-Content -Path (Join-Path $dir 'run-localise.ps1') -Value $runner -Encoding UTF8
-
-    [pscustomobject]@{ state = 'starting'; preset = $Preset; detail = 'Starting on RDP-HOST'; time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
+    Set-Content -Path (Join-Path $dir 'LabLocalise.ps1') -Value $EngineText -Encoding UTF8
+    Set-Content -Path (Join-Path $dir 'settings.json') -Value $SettingsJson -Encoding UTF8
+    [pscustomobject]@{ state = 'starting'; preset = $Label; detail = 'Starting on RDP-HOST'; time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
         ConvertTo-Json | Set-Content -Path (Join-Path $dir 'status.json') -Encoding UTF8
 
-    $arg      = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Preset "{1}"' -f (Join-Path $dir 'run-localise.ps1'), $Preset
-    $action   = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDirectory 'C:\scripts'
+    $arg      = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -SettingsFile "{1}"' -f (Join-Path $dir 'LabLocalise.ps1'), (Join-Path $dir 'settings.json')
+    $action   = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDirectory $dir
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName 'LabStart-Localise' -Action $action -Settings $settings `
         -User "$env:COMPUTERNAME\$User" -Password $Password -RunLevel Highest -Force | Out-Null
     Start-ScheduledTask -TaskName 'LabStart-Localise'
     return 'started'
+}
+
+# The engine: from the repo (same commit as this script), or next to this script when testing (-NoContentDownload)
+function Get-LocaliseEngine {
+    $local = $(if ($PSScriptRoot) { Join-Path $PSScriptRoot 'LabLocalise.ps1' } else { $null })
+    if ($NoContentDownload -and $local -and (Test-Path $local)) { return (Get-Content -Raw -Path $local) }
+    $url = "$RepoRaw/LabLocalise.ps1?" + (Get-Date -Format 'yyyyMMddHHmmss')
+    return (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30).Content
 }
 
 # Runs ON RDP-HOST: returns the status file, task state and the end of the log.
@@ -473,9 +408,25 @@ $btnApply.Add_Click({
     Set-Busy $true
     try {
         $label = "$($ch.Country.name), $($ch.Keyboard.name) keyboard"
-        $presetString = (@('custom', $ch.Keyboard.windows, $ch.Keyboard.gaia, $ch.Country.windowsTimezone, $ch.Country.gaiaRegion, $ch.Country.gaiaZone, $label) -join '|')
+        $cfg = [ordered]@{
+            windowsLanguage = [string]$ch.Keyboard.windows; windowsTimezone = [string]$ch.Country.windowsTimezone
+            gaiaKeyboard = [string]$ch.Keyboard.gaia; gaiaRegion = [string]$ch.Country.gaiaRegion; gaiaZone = [string]$ch.Country.gaiaZone
+            label = $label
+        }
+        # Optional per-course host lists in content.json: "localiseHosts": { "default": { "windows": [...], "gaia": [...] }, "CCSE": {...} }
+        if ($Content.localiseHosts) {
+            $code = Get-SelectedCourse
+            $lh = $null
+            if ($code) { $pp = $Content.localiseHosts.PSObject.Properties[$code]; if ($pp) { $lh = $pp.Value } }
+            if (-not $lh) { $pp = $Content.localiseHosts.PSObject.Properties['default']; if ($pp) { $lh = $pp.Value } }
+            if ($lh -and $lh.windows) { $cfg.windowsHosts = @($lh.windows) }
+            if ($lh -and $lh.gaia) { $cfg.gaiaHosts = @($lh.gaia) }
+        }
+        $settingsJson = ConvertTo-Json -InputObject ([pscustomobject]$cfg) -Depth 4
+        $engine = Get-LocaliseEngine
+        if (-not $engine -or $engine -notmatch 'Camino lab localisation engine') { throw 'Could not download the localisation engine (LabLocalise.ps1). Check the internet connection and try again.' }
         try { Set-Content -Path $CountryFile -Value $ch.Country.name -Encoding ASCII } catch {}
-        $r = Invoke-OnRdpHost -ScriptBlock $StartLocalise -Arguments @($presetString, $LabUser, $LabPassword)
+        $r = Invoke-OnRdpHost -ScriptBlock $StartLocalise -Arguments @($engine, $settingsJson, $label, $LabUser, $LabPassword)
         if ("$r" -eq 'already-running') {
             $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue
             $lblLocStatus.Text = 'Already running on RDP-HOST - showing progress.'
@@ -486,7 +437,8 @@ $btnApply.Add_Click({
         # Reopen Lab Start once at the next logon (A-GUI restarts part-way through the run).
         try {
             $self = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $StateDir 'LabStart.ps1' }
-            $cmd  = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$self`""
+            $cmd  = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$self`" -Ref $Ref"
+            if ($NoContentDownload) { $cmd += ' -NoContentDownload' }
             New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Force | Out-Null
             New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'LabStart' -Value $cmd -PropertyType String -Force | Out-Null
         } catch {}
