@@ -774,6 +774,13 @@
         "command": "C:\\LabTraffic.ps1 -Action Stop; C:\\LabTraffic.ps1 -Action Status",
         "note": "Runs as administrator. Stop the server on A-Host the same way (C:\\LabTraffic.ps1 -Action Stop).",
         "elevated": true
+      },
+      {
+        "name": "Update lab tools",
+        "desc": "Updates PuTTY, WinSCP, Notepad++ and 7-Zip on A-GUI to the current versions with winget.",
+        "command": "foreach ($id in 'PuTTY.PuTTY','WinSCP.WinSCP','Notepad++.Notepad++','7zip.7zip') { Write-Host \"== $id\" -ForegroundColor Cyan; winget upgrade --id $id -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity }",
+        "note": "Runs as administrator. Needs internet and takes a few minutes. PuTTY 0.72 in the lab has a known key-recovery flaw (CVE-2024-31497), fixed from 0.81.",
+        "elevated": true
       }
     ]
   },
@@ -857,5 +864,12 @@
         "type": "clish"
       }
     ]
+  },
+  "optimise": {
+    "default": {
+      "keepSmartConsole": [
+        "R82"
+      ]
+    }
   }
 }

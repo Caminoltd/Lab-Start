@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.7.3'
+$Version         = '0.8.1'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -352,10 +352,21 @@ $cbCountry.Add_SelectedIndexChanged({
 })
 $cbKeyboard.Add_SelectedIndexChanged({ Update-LocSummary })
 
+$chkRestart = New-Object System.Windows.Forms.CheckBox
+$chkRestart.Text = 'Restart the VMs afterwards (not needed)'
+$chkRestart.Location = New-Object System.Drawing.Point(440, 90); $chkRestart.Size = New-Object System.Drawing.Size(320, 24); $chkRestart.Font = $FontBody
+$chkRestart.Checked = $false
+$tabLoc.Controls.Add($chkRestart)
+
 $btnApply  = New-Button 'Apply to all lab VMs' 100 150 200 36
 $btnStatus = New-Button 'Check status' 312 150 150 36
+$btnOptimise = New-Button 'Optimise lab VMs' 474 150 180 36
 $tabLoc.Controls.Add($btnApply)
 $tabLoc.Controls.Add($btnStatus)
+$tabLoc.Controls.Add($btnOptimise)
+$tipLoc = New-Object System.Windows.Forms.ToolTip
+$tipLoc.SetToolTip($chkRestart, 'Not needed: time zones change at once, Gaia needs no restart, and Windows uses the new keyboard at the next log-on. Tick only if a VM does not pick up the change.')
+$tipLoc.SetToolTip($btnOptimise, 'Removes old SmartConsole versions, switches off Windows Search, SysMain and telemetry, removes OneDrive set-up at log-on, sets High performance power. No restarts.')
 
 $lblLocStatus = New-Label '' 16 198 920 44 $FontBold
 $tabLoc.Controls.Add($lblLocStatus)
@@ -380,7 +391,13 @@ function Show-LocaliseStatus([bool]$Quiet = $false) {
             'never-run' { $lblLocStatus.ForeColor = [System.Drawing.Color]::Black;     $lblLocStatus.Text = 'Not applied yet in this lab. Choose your country and click Apply.' }
             'starting'  { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue;  $lblLocStatus.Text = "Starting... ($($s.Time))" }
             'running'   { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue;  $lblLocStatus.Text = "In progress: $($s.Detail)  (updated $($s.Time))" }
-            'done'      { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkGreen; $lblLocStatus.Text = "Done: $(@(([string]$s.Preset) -split '\|')[-1]) settings applied. $($s.Detail). Wait until all VMs have restarted (3 to 5 minutes)." }
+            'done'      {
+                $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkGreen
+                $pre = @(([string]$s.Preset) -split '\|')[-1]
+                if ($pre -like 'Optimise*') { $lblLocStatus.Text = "Done: lab VMs optimised. $($s.Detail). No restarts needed." }
+                elseif ($pre -like '*(no restart)*') { $lblLocStatus.Text = "Done: $($pre -replace '\s*\(no restart\)', '') settings applied without restarts. $($s.Detail). On RDP-HOST, log off and on again for the new keyboard." }
+                else { $lblLocStatus.Text = "Done: $pre settings applied. $($s.Detail). Wait until all VMs have restarted (3 to 5 minutes)." }
+            }
             'failed'    { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkRed;   $lblLocStatus.Text = "Failed: $($s.Detail)  - see the log below and tell your trainer." }
             default     { $lblLocStatus.ForeColor = [System.Drawing.Color]::Black;     $lblLocStatus.Text = "State: $($s.State)" }
         }
@@ -400,15 +417,18 @@ $btnStatus.Add_Click({ Show-LocaliseStatus })
 $btnApply.Add_Click({
     if ($cbCountry.SelectedIndex -lt 0 -or $cbKeyboard.SelectedIndex -lt 0) { return }
     $ch = Get-LocChoice
-    $msg = "This sets the keyboard to $($ch.Keyboard.name) and the time zone to $($ch.Country.name) ($($ch.Country.gaiaRegion)/$($ch.Country.gaiaZone)) on all the lab VMs.`r`n`r`n" +
-           "About a minute after it starts, the Windows VMs restart - including this one (A-GUI). Save anything you have open first.`r`n`r`n" +
-           "Lab Start opens again by itself when you log back in to A-GUI, and shows the result.`r`n`r`nContinue?"
+    $noRestart = -not $chkRestart.Checked
+    $msg = "This sets the keyboard to $($ch.Keyboard.name) and the time zone to $($ch.Country.name) ($($ch.Country.gaiaRegion)/$($ch.Country.gaiaZone)) on all the lab VMs.`r`n`r`n"
+    if ($noRestart) { $msg += "No VM restarts. The time zones change at once; on RDP-HOST the new keyboard applies at your next log-on.`r`n`r`nContinue?" }
+    else { $msg += "About a minute after it starts, the Windows VMs restart - including this one (A-GUI). Save anything you have open first.`r`n`r`n" +
+           "Lab Start opens again by itself when you log back in to A-GUI, and shows the result.`r`n`r`nContinue?" }
     $ans = [System.Windows.Forms.MessageBox]::Show($msg, 'Apply keyboard and timezone', 'YesNo', 'Warning')
     if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
     Set-Busy $true
     try {
-        $label = "$($ch.Country.name), $($ch.Keyboard.name) keyboard"
+        $label = "$($ch.Country.name), $($ch.Keyboard.name) keyboard" + $(if ($noRestart) { ' (no restart)' } else { '' })
         $cfg = [ordered]@{
+            noReboot = [bool]$noRestart
             windowsLanguage = [string]$ch.Keyboard.windows; windowsTimezone = [string]$ch.Country.windowsTimezone
             gaiaKeyboard = [string]$ch.Keyboard.gaia; gaiaRegion = [string]$ch.Country.gaiaRegion; gaiaZone = [string]$ch.Country.gaiaZone
             label = $label
@@ -432,22 +452,57 @@ $btnApply.Add_Click({
             $lblLocStatus.Text = 'Already running on RDP-HOST - showing progress.'
         } else {
             $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue
-            $lblLocStatus.Text = 'Started on RDP-HOST. A-GUI restarts shortly - Lab Start opens again by itself after you log back in.'
+            $lblLocStatus.Text = $(if ($noRestart) { 'Started on RDP-HOST - showing progress here.' } else { 'Started on RDP-HOST. A-GUI restarts shortly - Lab Start opens again by itself after you log back in.' })
+        }
+        # No restart: give this A-GUI session the new keyboard now (the engine changes the logon script for later sessions)
+        if ($noRestart) {
+            try { Set-WinUserLanguageList -LanguageList @(@([string]$ch.Keyboard.windows, 'en-US') | Select-Object -Unique) -Force -WarningAction SilentlyContinue } catch {}
         }
         # Reopen Lab Start once at the next logon (A-GUI restarts part-way through the run).
-        try {
+        if (-not $noRestart) { try {
             $self = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $StateDir 'LabStart.ps1' }
             $cmd  = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$self`" -Ref $Ref"
             if ($NoContentDownload) { $cmd += ' -NoContentDownload' }
             New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Force | Out-Null
             New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'LabStart' -Value $cmd -PropertyType String -Force | Out-Null
-        } catch {}
+        } catch {} }
         $pollTimer.Start()
     }
     catch {
         $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkRed
         $lblLocStatus.Text = (Get-FriendlyRemoteError $_)
     }
+    finally { Set-Busy $false }
+})
+
+$btnOptimise.Add_Click({
+    $code = Get-SelectedCourse
+    $opt = @(Get-CourseValue $Content.optimise $code) | Select-Object -First 1
+    $keep = @('R82'); if ($opt -and $opt.keepSmartConsole) { $keep = @($opt.keepSmartConsole | ForEach-Object { [string]$_ }) }
+    $msg = "This tidies up the Windows lab VMs (no restarts):`r`n`r`n" +
+           "- removes SmartConsole versions other than $($keep -join ', ')`r`n" +
+           "- switches off Windows Search, SysMain and telemetry`r`n" +
+           "- removes OneDrive set-up at log-on, and VMware Tools on the servers`r`n" +
+           "- sets the High performance power plan and clears the update download cache`r`n`r`n" +
+           "Close any old SmartConsole that is open. It takes a few minutes.`r`n`r`nContinue?"
+    if ([System.Windows.Forms.MessageBox]::Show($msg, 'Optimise lab VMs', 'YesNo', 'Question') -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    Set-Busy $true
+    try {
+        $cfg = [ordered]@{ mode = 'optimise'; label = 'Optimise lab VMs'; keepSmartConsole = $keep }
+        if ($Content.localiseHosts) {
+            $lh = @(Get-CourseValue $Content.localiseHosts $code) | Select-Object -First 1
+            if ($lh -and $lh.windows) { $cfg.windowsHosts = @($lh.windows) }
+        }
+        $settingsJson = ConvertTo-Json -InputObject ([pscustomobject]$cfg) -Depth 4
+        $engine = Get-LocaliseEngine
+        if (-not $engine -or $engine -notmatch 'Camino lab localisation engine') { throw 'Could not download the engine (LabLocalise.ps1). Check the internet connection and try again.' }
+        if ($engine -notmatch 'WindowsOptimise') { throw 'The engine on GitHub is too old for Optimise. Click Refresh content or restart Lab Start.' }
+        $r = Invoke-OnRdpHost -ScriptBlock $StartLocalise -Arguments @($engine, $settingsJson, 'Optimise lab VMs', $LabUser, $LabPassword)
+        $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkBlue
+        $lblLocStatus.Text = $(if ("$r" -eq 'already-running') { 'A run is already in progress on RDP-HOST - showing progress.' } else { 'Optimising on RDP-HOST - showing progress here.' })
+        $pollTimer.Start()
+    }
+    catch { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkRed; $lblLocStatus.Text = (Get-FriendlyRemoteError $_) }
     finally { Set-Busy $false }
 })
 
@@ -932,7 +987,7 @@ $GaiaHostWorker = {
                 Remove-Item $f -Force -ErrorAction SilentlyContinue
                 Write-Out $r.Out
                 if ($r.Out -match 'command not found|CLINFR\d+|NMS[A-Z]{3}\d+') { $bad++; Log 'FAIL: keyboard and time zone' }
-                else { $ok++; $restarting = $true; Log 'OK: keyboard and time zone set - the host is restarting' }
+                else { $ok++; Log 'OK: keyboard and time zone set' }
                 $shell = 'clish'
                 continue
             }
@@ -1019,7 +1074,7 @@ function Get-GaiaLocaliseItem {
     $label = 'Keyboard and time zone'
     if ($cbCountry.SelectedIndex -ge 0 -and $cbKeyboard.SelectedIndex -ge 0) {
         $ch = Get-LocChoice
-        $label = "Keyboard and time zone: $($ch.Country.name), $($ch.Keyboard.name) (expert; restarts the host)"
+        $label = "Keyboard and time zone: $($ch.Country.name), $($ch.Keyboard.name) (expert, no restart)"
         $tz = "$($ch.Country.gaiaRegion) / $($ch.Country.gaiaZone)"
         $script = @(
             "clish -c 'set timezone $tz'",
@@ -1028,8 +1083,7 @@ function Get-GaiaLocaliseItem {
             '/bin/kbd_map_xlate keyboard:mapping < /config/db/initial',
             "clish -c 'set user admin shell /etc/cli.sh'",
             "clish -c 'save config'",
-            'rm -f /home/admin/.clish_history',
-            'reboot'
+            'rm -f /home/admin/.clish_history'
         )
     }
     return [pscustomobject]@{ Text = $label; Type = 'localise'; Script = $script }
@@ -1109,7 +1163,6 @@ function Start-GaiaRun([bool]$CheckOnly) {
         for ($i = 0; $i -lt $clbGaiaCmds.Items.Count; $i++) { if ($clbGaiaCmds.GetItemChecked($i)) { $cmds += $script:GaiaCmdObjs[$i] } }
         if ($cmds.Count -eq 0) { $lblGaiaMsg.Text = 'Tick at least one command.'; return }
         $msg = "Run on $($hosts.Count) host(s):`r`n`r`n" + (($cmds | ForEach-Object { '  ' + $_.Text }) -join "`r`n")
-        if (@($cmds | Where-Object { $_.Type -eq 'localise' }).Count) { $msg += "`r`n`r`nThe keyboard and time zone item restarts each host it runs on." }
         if ([System.Windows.Forms.MessageBox]::Show($msg, 'Gaia commands', 'YesNo', 'Question') -ne [System.Windows.Forms.DialogResult]::Yes) { return }
     }
     $script:GaiaSync = [hashtable]::Synchronized(@{
