@@ -763,16 +763,23 @@
       },
       {
         "name": "Traffic generator - start",
-        "desc": "Sends background traffic (Light: TCP, UDP and HTTP) from A-GUI through the gateway to A-Host and A-DMZ, so cpview, fwaccel stats and the logs have something to show. Runs for 15 minutes.",
-        "command": "irm https://raw.githubusercontent.com/Don-Paterson/Lab-Traffic-Gen/main/LabTraffic.ps1 -OutFile C:\\LabTraffic.ps1; C:\\LabTraffic.ps1 -Role Client -Action Start -Load Light -Target 192.168.11.201",
-        "note": "Runs as administrator. First start the server on A-Host (elevated PowerShell): irm https://raw.githubusercontent.com/Don-Paterson/Lab-Traffic-Gen/main/LabTraffic.ps1 -OutFile C:\\LabTraffic.ps1; C:\\LabTraffic.ps1 -Role Server -Action Start. The policy needs a rule A-GUI to A-Host TCP/UDP 5201-5202 and A-GUI to A-DMZ http, Track None.",
+        "desc": "Starts the traffic generator in one step: the server on A-Host (through RDP-HOST), then the client here. Light TCP, UDP and HTTP load through the gateway for 15 minutes.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/traffic.ps1))) -Action Start",
+        "note": "Runs as administrator. Needs Access Control rules: A-GUI to A-Host TCP/UDP 5201-5202 and A-GUI to A-DMZ http, Track None. The first start takes about a minute.",
         "elevated": true
       },
       {
         "name": "Traffic generator - stop",
-        "desc": "Stops the traffic generator on A-GUI and shows its status.",
-        "command": "C:\\LabTraffic.ps1 -Action Stop; C:\\LabTraffic.ps1 -Action Status",
-        "note": "Runs as administrator. Stop the server on A-Host the same way (C:\\LabTraffic.ps1 -Action Stop).",
+        "desc": "Stops the traffic generator here and on A-Host.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/traffic.ps1))) -Action Stop",
+        "note": "Runs as administrator.",
+        "elevated": true
+      },
+      {
+        "name": "Traffic generator - status",
+        "desc": "Shows what the traffic generator is running here and on A-Host.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/traffic.ps1))) -Action Status",
+        "note": "",
         "elevated": true
       },
       {
