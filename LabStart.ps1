@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.8.4'
+$Version         = '0.8.5'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -443,6 +443,7 @@ $btnApply.Add_Click({
             if ($lh -and $lh.gaia) { $cfg.gaiaHosts = @($lh.gaia) }
             if ($lh -and $lh.linux) { $cfg.linuxHosts = @($lh.linux) }
             if ($lh -and $lh.vyos) { $cfg.vyosHosts = @($lh.vyos) }
+            if ($lh -and $lh.vyosVia) { $cfg.vyosViaHosts = @($lh.vyosVia) }
         }
         $settingsJson = ConvertTo-Json -InputObject ([pscustomobject]$cfg) -Depth 4
         $engine = Get-LocaliseEngine

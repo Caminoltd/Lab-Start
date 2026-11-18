@@ -46,6 +46,9 @@ param(
     [string]$LinuxUser       = 'root',
     [string[]]$VyosHosts     = @(),
     [string]$VyosUser        = 'vyos',
+    # VyOS routers that only accept SSH from their own side, as 'router@windowsVM' (e.g. C-GW via C-Host in CPVS):
+    # plink is copied to that Windows VM for the run, used from there, then removed
+    [string[]]$VyosViaHosts  = @(),
     [string]$PlinkPath       = 'C:\Program Files\PuTTY\plink.exe',
     [string]$StateDir        = 'C:\scripts\LabStart',
     [int]$RebootDelaySeconds = 60,
@@ -56,7 +59,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.3.2'
+$EngineVersion = '1.4.0'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -74,6 +77,7 @@ if ($SettingsFile) {
             'gaiaHosts'          { $GaiaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'linuxHosts'         { $LinuxHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'vyosHosts'          { $VyosHosts = @($p.Value | ForEach-Object { [string]$_ }) }
+            'vyosViaHosts'       { $VyosViaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'gaiaLateHosts'      { $LateGaiaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'extraLanguages'     { $ExtraLanguages = @($p.Value | ForEach-Object { [string]$_ }) }
             'password'           { $Password = [string]$p.Value }
@@ -148,17 +152,18 @@ if exist c:\scripts\local_changes.ps1 start /MIN PowerShell.exe -NoProfile -Exec
                 "Set-WinUserLanguageList -LanguageList $langList -Force -WarningAction SilentlyContinue",
                 "`$tip = @((Get-WinUserLanguageList)[0].InputMethodTips)[0]",
                 "`$klid = (`$tip -split ':')[-1]",
-                "Add-Type -Namespace LabStart -Name Kbd -MemberDefinition '[DllImport(""user32.dll"")] public static extern IntPtr LoadKeyboardLayout(string id, uint flags); [DllImport(""user32.dll"")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); [DllImport(""user32.dll"")] public static extern bool SystemParametersInfo(uint a, uint b, ref IntPtr c, uint d); [DllImport(""user32.dll"")] public static extern IntPtr FindWindow(string c, string w); [DllImport(""user32.dll"")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p); [DllImport(""user32.dll"")] public static extern IntPtr GetKeyboardLayout(uint t);'",
+                "Add-Type -Namespace LabStart -Name Kbd -MemberDefinition '[DllImport(""user32.dll"")] public static extern IntPtr LoadKeyboardLayout(string id, uint flags); [DllImport(""user32.dll"")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); [DllImport(""user32.dll"")] public static extern bool SystemParametersInfo(uint a, uint b, ref IntPtr c, uint d); [DllImport(""user32.dll"")] public static extern IntPtr FindWindow(string c, string w); [DllImport(""user32.dll"")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p); [DllImport(""user32.dll"")] public static extern IntPtr GetKeyboardLayout(uint t); [DllImport(""user32.dll"")] public static extern IntPtr GetForegroundWindow();'",
                 "`$h = [LabStart.Kbd]::LoadKeyboardLayout(`$klid, 1)",
-                "[void][LabStart.Kbd]::SystemParametersInfo(0x5A, 0, [ref]`$h, 2)",
-                "[void][LabStart.Kbd]::PostMessage([IntPtr]0xffff, 0x50, [IntPtr]::Zero, `$h)",
+                "`$tray = [LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null)",
+                "if (`$tray -ne [IntPtr]::Zero) { [void][LabStart.Kbd]::PostMessage(`$tray, 0x50, [IntPtr]::Zero, `$h) }",
+                "`$fg = [LabStart.Kbd]::GetForegroundWindow(); if (`$fg -ne [IntPtr]::Zero -and `$fg -ne `$tray) { [void][LabStart.Kbd]::PostMessage(`$fg, 0x50, [IntPtr]::Zero, `$h) }",
                 "`$want = [Convert]::ToInt32(`$klid.Substring(4), 16)",
                 "function Get-TrayLang { `$t = [LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null); if (`$t -eq [IntPtr]::Zero) { return -1 }; `$p = 0; `$tid = [LabStart.Kbd]::GetWindowThreadProcessId(`$t, [ref]`$p); return ([LabStart.Kbd]::GetKeyboardLayout(`$tid).ToInt64() -band 0xFFFF) }",
                 "Start-Sleep -Milliseconds 800",
                 "`$how = 'switched'",
                 "`$cur = Get-TrayLang",
-                "if (`$cur -ne -1 -and `$cur -ne `$want) { [void][LabStart.Kbd]::PostMessage([LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null), 0x50, [IntPtr]::Zero, `$h); Start-Sleep -Milliseconds 800; `$cur = Get-TrayLang; `$how = 'taskbar' }",
-                "if (`$cur -ne -1 -and `$cur -ne `$want) { Get-Process explorer -ErrorAction SilentlyContinue | Where-Object { `$_.SessionId -eq (Get-Process -Id `$PID).SessionId } | Stop-Process -Force; Start-Sleep -Seconds 2; if (-not (Get-Process explorer -ErrorAction SilentlyContinue | Where-Object { `$_.SessionId -eq (Get-Process -Id `$PID).SessionId })) { Start-Process explorer.exe }; `$how = 'explorer restarted' }",
+                "if (`$cur -ne -1 -and `$cur -ne `$want) { if (`$tray -ne [IntPtr]::Zero) { [void][LabStart.Kbd]::PostMessage(`$tray, 0x50, [IntPtr]::Zero, `$h) }; Start-Sleep -Milliseconds 1500; `$cur = Get-TrayLang; `$how = 'taskbar (2nd try)' }",
+                "if (`$cur -ne -1 -and `$cur -ne `$want) { `$how = 'not switched - applies at next log-on' }",
                 "try { Add-Content -Path '$logS' -Value ((Get-Date -Format s) + ' ' + `$env:USERDOMAIN + '\' + `$env:USERNAME + ' ' + `$klid + ' ' + `$how) } catch {}"
             ) -join "`r`n"
             $sessFile = Join-Path $dir 'session_keyboard.ps1'
@@ -476,16 +481,47 @@ $SshWorker = {
     return [pscustomobject]$res
 }
 
+# Runs in a background runspace per VyOS router reached through a Windows VM ('router@windowsVM')
+$ViaWorker = {
+    param([string]$Target, [string]$Via, [string[]]$Users, [string]$User, [string]$Pw, [string]$Plink, [string]$Command, [string]$SshText)
+    $res = [ordered]@{ ip = $Target; kind = 'VyOS'; name = ''; ok = $false; result = ''; output = '' }
+    try {
+        $up = $false
+        try { $tcp = New-Object System.Net.Sockets.TcpClient; $ar = $tcp.BeginConnect($Via, 5985, $null, $null); $up = $ar.AsyncWaitHandle.WaitOne(2500) -and $tcp.Connected; $tcp.Close() } catch {}
+        if (-not $up) { $res.result = "skipped - $Via (the VM it is reached through) not reachable"; return [pscustomobject]$res }
+        $sec = ConvertTo-SecureString $Pw -AsPlainText -Force
+        $s = $null; $errs = @()
+        foreach ($u in $Users) {
+            try { $s = New-PSSession -ComputerName $Via -Credential (New-Object System.Management.Automation.PSCredential ($u, $sec)) -ErrorAction Stop; break }
+            catch { $errs += "$u - " + ($_.Exception.Message -split "`n")[0] }
+        }
+        if (-not $s) { $res.result = "failed: no login to $Via (" + ($errs -join ' / ') + ')'; return [pscustomobject]$res }
+        $remotePlink = 'C:\Windows\Temp\labstart_plink.exe'
+        try {
+            Copy-Item -Path $Plink -Destination $remotePlink -ToSession $s -Force -ErrorAction Stop
+            $r = Invoke-Command -Session $s -ErrorAction Stop -ScriptBlock {
+                param($T, $U, $P, $Pl, $C, $Txt)
+                $w = [scriptblock]::Create($Txt)
+                try { & $w $T $U $P $Pl $C 'VyOS' } finally { Remove-Item -Path $Pl -Force -ErrorAction SilentlyContinue }
+            } -ArgumentList $Target, $User, $Pw, $remotePlink, $Command, $SshText
+            $r = @($r)[0]
+            $res.name = [string]$r.name; $res.ok = [bool]$r.ok; $res.output = [string]$r.output
+            $res.result = ([string]$r.result -replace '^skipped - not reachable on SSH', "skipped - not reachable on SSH from $Via") + $(if ($r.ok) { " (via $Via)" } else { '' })
+        } finally { Remove-PSSession $s -ErrorAction SilentlyContinue }
+    } catch { $res.result = 'failed: ' + $_.Exception.Message }
+    return [pscustomobject]$res
+}
+
 # ==== main ===================================================================================================
 Set-Content -Path $LogFile -Value ("Camino lab localisation engine $EngineVersion on $env:COMPUTERNAME - started " + (Get-Date)) -Encoding UTF8
 Write-Log "Settings: $Label"
 if ($Mode -eq 'optimise') {
     Write-Log "  Optimise the Windows VMs: keep SmartConsole $($KeepSmartConsole -join ', '); no restarts"
-    $GaiaHosts = @(); $LateGaiaHosts = @(); $LinuxHosts = @(); $VyosHosts = @()
+    $GaiaHosts = @(); $LateGaiaHosts = @(); $LinuxHosts = @(); $VyosHosts = @(); $VyosViaHosts = @()
 } else {
     Write-Log "  Windows: language list $($Languages -join ', '); time zone '$WindowsTimezone'"
     Write-Log "  Gaia:    keyboard '$GaiaKeyboard'; time zone '$GaiaRegion / $GaiaZone'" + $(if ($NoReboot) { '  (no restarts)' } else { '' })
-    if ($LinuxHosts.Count -or $VyosHosts.Count) { Write-Log "  Linux/VyOS: time zone '$GaiaRegion/$GaiaZone' (Linux console keymap '$GaiaKeyboard'), no restarts" }
+    if ($LinuxHosts.Count -or $VyosHosts.Count -or $VyosViaHosts.Count) { Write-Log "  Linux/VyOS: time zone '$GaiaRegion/$GaiaZone' (Linux console keymap '$GaiaKeyboard'), no restarts" }
 }
 Set-Status 'running' 'Starting'
 
@@ -534,7 +570,7 @@ try {
     foreach ($ip in $GaiaHosts) { $jobs += & $startGaia $ip @() $false }
     $lateStarted = ($LateGaiaHosts.Count -eq 0)
     # Linux servers and VyOS routers: time zone only (+ Linux console keymap); never restarted
-    if (-not (Test-Path $PlinkPath)) { $LinuxHosts = @(); $VyosHosts = @() }
+    if (-not (Test-Path $PlinkPath)) { $LinuxHosts = @(); $VyosHosts = @(); $VyosViaHosts = @() }
     $ianaTz = "$GaiaRegion/$GaiaZone" -replace '\s', ''
     $linuxCmd = "echo LSNAME_`$(hostname -s); timedatectl set-timezone $ianaTz || exit 1; localectl set-keymap $GaiaKeyboard 2>/dev/null || echo LSWARN_keymap_not_changed; echo LSDONE"
     # VyOS only runs config commands from a script file (not vbash -c): write one, run it, remove it
@@ -551,7 +587,16 @@ try {
         $jobs += [pscustomobject]@{ Key = "vyos:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
         $script:HostResults["vyos:$ip"] = [pscustomobject]@{ ip = $ip; kind = 'VyOS'; name = ''; ok = $false; result = 'working' }
     }
-    Set-Status 'running' ("Applying to $($WindowsHosts.Count) Windows VMs and $($GaiaHosts.Count + $LateGaiaHosts.Count) Gaia hosts" + $(if ($LinuxHosts.Count + $VyosHosts.Count) { " and $($LinuxHosts.Count + $VyosHosts.Count) Linux/VyOS" } else { '' }))
+    foreach ($pair in $VyosViaHosts) {
+        $t, $v = ($pair -split '@', 2)
+        if (-not $t -or -not $v) { continue }
+        $ps = [powershell]::Create(); $ps.RunspacePool = $pool
+        [void]$ps.AddScript($ViaWorker).AddArgument($t).AddArgument($v).AddArgument([string[]]@($DomainUser, $LocalUser, '.\admin')).AddArgument($VyosUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($vyosCmd).AddArgument($SshWorker.ToString())
+        $jobs += [pscustomobject]@{ Key = "vyos:$t"; Ip = $t; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
+        $script:HostResults["vyos:$t"] = [pscustomobject]@{ ip = $t; kind = 'VyOS'; name = ''; ok = $false; result = 'working' }
+    }
+    $nSsh = $LinuxHosts.Count + $VyosHosts.Count + $VyosViaHosts.Count
+    Set-Status 'running' ("Applying to $($WindowsHosts.Count) Windows VMs and $($GaiaHosts.Count + $LateGaiaHosts.Count) Gaia hosts" + $(if ($nSsh) { " and $nSsh Linux/VyOS" } else { '' }))
 
     $deadline = (Get-Date).AddMinutes($(if ($Mode -eq 'optimise') { 20 } else { 8 }))
     while ((-not $lateStarted -or @($jobs | Where-Object { -not $_.Done }).Count -gt 0) -and (Get-Date) -lt $deadline) {
