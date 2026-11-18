@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.8.2'
+$Version         = '0.8.4'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -441,6 +441,8 @@ $btnApply.Add_Click({
             if (-not $lh) { $pp = $Content.localiseHosts.PSObject.Properties['default']; if ($pp) { $lh = $pp.Value } }
             if ($lh -and $lh.windows) { $cfg.windowsHosts = @($lh.windows) }
             if ($lh -and $lh.gaia) { $cfg.gaiaHosts = @($lh.gaia) }
+            if ($lh -and $lh.linux) { $cfg.linuxHosts = @($lh.linux) }
+            if ($lh -and $lh.vyos) { $cfg.vyosHosts = @($lh.vyos) }
         }
         $settingsJson = ConvertTo-Json -InputObject ([pscustomobject]$cfg) -Depth 4
         $engine = Get-LocaliseEngine
@@ -883,7 +885,13 @@ $lvExtras.BringToFront()
 
 function Fill-Extras {
     $lvExtras.Items.Clear()
-    foreach ($x in (Get-CourseValue $Content.extras (Get-SelectedCourse))) {
+    $code = Get-SelectedCourse
+    $items = @()
+    if ($Content.extras) {
+        $d = $Content.extras.PSObject.Properties['default']; if ($d) { $items += @($d.Value) }
+        if ($code) { $c = $Content.extras.PSObject.Properties[$code]; if ($c) { $items += @($c.Value) } }
+    }
+    foreach ($x in $items) {
         $it = New-Object System.Windows.Forms.ListViewItem([string]$x.name)
         [void]$it.SubItems.Add([string]$x.desc)
         $it.Tag = $x

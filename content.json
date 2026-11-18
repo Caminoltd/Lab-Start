@@ -789,6 +789,43 @@
         "note": "Runs as administrator. Needs internet and takes a few minutes. PuTTY 0.72 in the lab has a known key-recovery flaw (CVE-2024-31497), fixed from 0.81.",
         "elevated": true
       }
+    ],
+    "CTPS": [
+      {
+        "name": "HTTPS on A-DMZ - add",
+        "desc": "Adds an HTTPS (443) site to A-DMZ's IIS, via RDP-HOST, so HTTPS inspection has an internal target.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/dmz-https.ps1))) ",
+        "note": "Runs as administrator. No restart. Add a policy rule A-GUI/Attacker to A-DMZ https to use it. Self-signed certificate.",
+        "elevated": true
+      },
+      {
+        "name": "HTTPS on A-DMZ - remove",
+        "desc": "Removes the HTTPS binding, certificate and firewall rule from A-DMZ. The http site stays.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/dmz-https.ps1))) -Remove",
+        "note": "Runs as administrator.",
+        "elevated": true
+      },
+      {
+        "name": "TP test - malware and bots",
+        "desc": "From A-GUI, requests the course's EICAR, wicar, Anti-Bot and threat-cloud test pages and shows Blocked or Allowed. Matches Labs 3A/6A.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test Malware",
+        "note": "Runs as administrator. Some bot tests only respond once Anti-Bot is enabled. Results also appear in SmartConsole logs.",
+        "elevated": true
+      },
+      {
+        "name": "TP test - attacker (nikto, hping3)",
+        "desc": "Runs the Attacker (Kali) steps via RDP-HOST: nikto against A-DMZ-NAT and large ICMP packets. Matches Labs 2A/6A/7A.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test Attacks",
+        "note": "Runs as administrator. Kali needs SSH on (once on Kali: sudo systemctl enable --now ssh). Takes up to 2 minutes.",
+        "elevated": true
+      },
+      {
+        "name": "TP test - DoS flood (penalty box)",
+        "desc": "Runs an ICMP flood from Kali at the gateway for 20 seconds, for the Lab 10A penalty box / rate limit demo.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test Flood -Seconds 20",
+        "note": "Runs as administrator. Kali needs SSH on. Stops itself after 20 seconds.",
+        "elevated": true
+      }
     ]
   },
   "gaiaHosts": {
@@ -860,6 +897,37 @@
         "name": "B-GW",
         "ip": "198.51.100.1"
       }
+    ],
+    "CPVS": [
+      {
+        "name": "A-SMS",
+        "ip": "10.1.1.101"
+      },
+      {
+        "name": "A-GW-01",
+        "ip": "10.1.1.2"
+      },
+      {
+        "name": "A-GW-02",
+        "ip": "10.1.1.3"
+      },
+      {
+        "name": "A-SME",
+        "ip": "10.1.1.130"
+      },
+      {
+        "name": "B-GW",
+        "ip": "198.51.100.1"
+      },
+      {
+        "name": "Border-Router (R80.20)",
+        "ip": "203.0.113.254"
+      },
+      {
+        "name": "A-GW-Cluster VIP",
+        "ip": "10.1.1.1",
+        "checked": false
+      }
     ]
   },
   "gaiaCommands": {
@@ -906,6 +974,40 @@
     "default": {
       "keepSmartConsole": [
         "R82"
+      ]
+    },
+    "CPVS": {
+      "keepSmartConsole": [
+        "R82.10",
+        "R82"
+      ]
+    }
+  },
+  "localiseHosts": {
+    "CPVS": {
+      "windows": [
+        "10.1.1.201",
+        "192.168.110.101",
+        "192.168.111.201",
+        "192.168.120.201",
+        "192.168.130.201",
+        "192.0.2.201"
+      ],
+      "gaia": [
+        "10.1.1.2",
+        "10.1.1.3",
+        "10.1.1.101",
+        "10.1.1.130",
+        "198.51.100.1",
+        "203.0.113.254"
+      ],
+      "linux": [
+        "192.168.12.101"
+      ],
+      "vyos": [
+        "192.168.11.254",
+        "192.168.21.254",
+        "192.168.31.254"
       ]
     }
   }

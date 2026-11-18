@@ -41,6 +41,11 @@ param(
     [string]$Password        = 'Chkp!234',
     [string]$DomainUser      = 'ALPHA\Administrator',
     [string]$LocalUser       = 'admin',
+    # Linux servers (e.g. A-DMZ in CPVS) and VyOS routers: time zone (+ console keymap on Linux) over SSH
+    [string[]]$LinuxHosts    = @(),
+    [string]$LinuxUser       = 'root',
+    [string[]]$VyosHosts     = @(),
+    [string]$VyosUser        = 'vyos',
     [string]$PlinkPath       = 'C:\Program Files\PuTTY\plink.exe',
     [string]$StateDir        = 'C:\scripts\LabStart',
     [int]$RebootDelaySeconds = 60,
@@ -51,7 +56,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.2.0'
+$EngineVersion = '1.3.2'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -67,6 +72,8 @@ if ($SettingsFile) {
             'label'              { $Label = [string]$p.Value }
             'windowsHosts'       { $WindowsHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'gaiaHosts'          { $GaiaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
+            'linuxHosts'         { $LinuxHosts = @($p.Value | ForEach-Object { [string]$_ }) }
+            'vyosHosts'          { $VyosHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'gaiaLateHosts'      { $LateGaiaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'extraLanguages'     { $ExtraLanguages = @($p.Value | ForEach-Object { [string]$_ }) }
             'password'           { $Password = [string]$p.Value }
@@ -421,6 +428,8 @@ $GaiaWorker = {
             [void](Run-Plink ("-batch $base " + (Q 'set user admin shell /bin/bash')) $null 45)
         }
         $f = [IO.Path]::GetTempFileName()
+        # Leave the login shell as found: a host that logged in to bash (e.g. CPVS Border-Router) stays on bash
+        if ($isBash) { $ScriptLines = @($ScriptLines | Where-Object { $_ -notmatch 'set user admin shell /etc/cli\.sh' }) }
         [IO.File]::WriteAllText($f, (($ScriptLines -join "`n") + "`n"))
         $r = Run-Plink ("-batch $base -m " + (Q $f)) $null 150
         Remove-Item $f -Force -ErrorAction SilentlyContinue
@@ -432,15 +441,51 @@ $GaiaWorker = {
     return [pscustomobject]$res
 }
 
+# Runs in a background runspace per Linux server or VyOS router: one plink command, no restart
+$SshWorker = {
+    param([string]$Ip, [string]$User, [string]$Pw, [string]$Plink, [string]$Command, [string]$Kind)
+    $res = [ordered]@{ ip = $Ip; kind = $Kind; name = ''; ok = $false; result = ''; output = '' }
+    function Q([string]$s) { '"' + ($s -replace '"', '\"') + '"' }
+    function Run-Plink([string]$ArgLine, [string]$Stdin, [int]$TimeoutSec) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Plink; $psi.Arguments = $ArgLine
+        $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+        try { if ($Stdin) { $p.StandardInput.Write($Stdin) }; $p.StandardInput.Close() } catch {}
+        $done = $p.WaitForExit($TimeoutSec * 1000)
+        if (-not $done) { try { $p.Kill() } catch {}; [void]$p.WaitForExit(3000) }
+        $out = ''; try { $out = ($o.Result + "`n" + $e.Result).Trim() } catch {}
+        return [pscustomobject]@{ Out = $out; TimedOut = (-not $done) }
+    }
+    try {
+        $up = $false
+        try { $tcp = New-Object System.Net.Sockets.TcpClient; $ar = $tcp.BeginConnect($Ip, 22, $null, $null); $up = $ar.AsyncWaitHandle.WaitOne(2500) -and $tcp.Connected; $tcp.Close() } catch {}
+        if (-not $up) { $res.result = 'skipped - not reachable on SSH (switched off?)'; return [pscustomobject]$res }
+        $base = "-ssh -l $User -pw " + (Q $Pw) + " $Ip"
+        $r = Run-Plink "$base exit" "y`n" 25
+        if ($r.Out -match 'Access denied') { $res.result = 'failed: login refused'; return [pscustomobject]$res }
+        $r = Run-Plink ("-batch $base " + (Q $Command)) $null 90
+        if ($r.TimedOut) { $res.result = 'failed: no answer over SSH'; return [pscustomobject]$res }
+        $lines = @($r.Out -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notmatch 'Welcome to|authorized|banner|Using username|Keyboard-interactive' })
+        if ($r.Out -match 'LSNAME_(\S+)') { $res.name = $Matches[1] }
+        if ($r.Out -match 'LSDONE') { $res.ok = $true; $res.result = 'done' + $(if ($r.Out -match 'LSWARN_(\S+)') { " ($($Matches[1] -replace '_', ' '))" } else { '' }) }
+        else { $res.result = 'failed - see the log'; $res.output = (($lines | Select-Object -Last 6) -join ' | ') }
+    } catch { $res.result = 'failed: ' + $_.Exception.Message }
+    return [pscustomobject]$res
+}
+
 # ==== main ===================================================================================================
 Set-Content -Path $LogFile -Value ("Camino lab localisation engine $EngineVersion on $env:COMPUTERNAME - started " + (Get-Date)) -Encoding UTF8
 Write-Log "Settings: $Label"
 if ($Mode -eq 'optimise') {
     Write-Log "  Optimise the Windows VMs: keep SmartConsole $($KeepSmartConsole -join ', '); no restarts"
-    $GaiaHosts = @(); $LateGaiaHosts = @()
+    $GaiaHosts = @(); $LateGaiaHosts = @(); $LinuxHosts = @(); $VyosHosts = @()
 } else {
     Write-Log "  Windows: language list $($Languages -join ', '); time zone '$WindowsTimezone'"
     Write-Log "  Gaia:    keyboard '$GaiaKeyboard'; time zone '$GaiaRegion / $GaiaZone'" + $(if ($NoReboot) { '  (no restarts)' } else { '' })
+    if ($LinuxHosts.Count -or $VyosHosts.Count) { Write-Log "  Linux/VyOS: time zone '$GaiaRegion/$GaiaZone' (Linux console keymap '$GaiaKeyboard'), no restarts" }
 }
 Set-Status 'running' 'Starting'
 
@@ -473,7 +518,7 @@ try {
     $jobs = @()
     foreach ($ip in $WindowsHosts) {
         $ps = [powershell]::Create(); $ps.RunspacePool = $pool
-        [void]$ps.AddScript($WindowsWorker).AddArgument($ip).AddArgument([string[]]@($DomainUser, $LocalUser)).AddArgument($Password).AddArgument($applyBlock).AddArgument([object[]]$applyArgs)
+        [void]$ps.AddScript($WindowsWorker).AddArgument($ip).AddArgument([string[]]@($DomainUser, $LocalUser, '.\admin')).AddArgument($Password).AddArgument($applyBlock).AddArgument([object[]]$applyArgs)
         $jobs += [pscustomobject]@{ Key = "win:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
         $script:HostResults["win:$ip"] = [pscustomobject]@{ ip = $ip; kind = 'Windows'; name = ''; ok = $false; result = 'working' }
     }
@@ -488,7 +533,25 @@ try {
     }
     foreach ($ip in $GaiaHosts) { $jobs += & $startGaia $ip @() $false }
     $lateStarted = ($LateGaiaHosts.Count -eq 0)
-    Set-Status 'running' "Applying to $($WindowsHosts.Count) Windows VMs and $($GaiaHosts.Count + $LateGaiaHosts.Count) Gaia hosts"
+    # Linux servers and VyOS routers: time zone only (+ Linux console keymap); never restarted
+    if (-not (Test-Path $PlinkPath)) { $LinuxHosts = @(); $VyosHosts = @() }
+    $ianaTz = "$GaiaRegion/$GaiaZone" -replace '\s', ''
+    $linuxCmd = "echo LSNAME_`$(hostname -s); timedatectl set-timezone $ianaTz || exit 1; localectl set-keymap $GaiaKeyboard 2>/dev/null || echo LSWARN_keymap_not_changed; echo LSDONE"
+    # VyOS only runs config commands from a script file (not vbash -c): write one, run it, remove it
+    $vyosCmd = "echo LSNAME_`$(cat /etc/hostname); printf '%s\n' '#!/bin/vbash' 'source /opt/vyatta/etc/functions/script-template' 'configure' 'set system time-zone $ianaTz' 'commit' 'save' 'exit' > /tmp/lstz.sh; /bin/vbash /tmp/lstz.sh; rc=`$?; rm -f /tmp/lstz.sh; [ `$rc -eq 0 ] && echo LSDONE"
+    foreach ($ip in $LinuxHosts) {
+        $ps = [powershell]::Create(); $ps.RunspacePool = $pool
+        [void]$ps.AddScript($SshWorker).AddArgument($ip).AddArgument($LinuxUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($linuxCmd).AddArgument('Linux')
+        $jobs += [pscustomobject]@{ Key = "linux:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
+        $script:HostResults["linux:$ip"] = [pscustomobject]@{ ip = $ip; kind = 'Linux'; name = ''; ok = $false; result = 'working' }
+    }
+    foreach ($ip in $VyosHosts) {
+        $ps = [powershell]::Create(); $ps.RunspacePool = $pool
+        [void]$ps.AddScript($SshWorker).AddArgument($ip).AddArgument($VyosUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($vyosCmd).AddArgument('VyOS')
+        $jobs += [pscustomobject]@{ Key = "vyos:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
+        $script:HostResults["vyos:$ip"] = [pscustomobject]@{ ip = $ip; kind = 'VyOS'; name = ''; ok = $false; result = 'working' }
+    }
+    Set-Status 'running' ("Applying to $($WindowsHosts.Count) Windows VMs and $($GaiaHosts.Count + $LateGaiaHosts.Count) Gaia hosts" + $(if ($LinuxHosts.Count + $VyosHosts.Count) { " and $($LinuxHosts.Count + $VyosHosts.Count) Linux/VyOS" } else { '' }))
 
     $deadline = (Get-Date).AddMinutes($(if ($Mode -eq 'optimise') { 20 } else { 8 }))
     while ((-not $lateStarted -or @($jobs | Where-Object { -not $_.Done }).Count -gt 0) -and (Get-Date) -lt $deadline) {
