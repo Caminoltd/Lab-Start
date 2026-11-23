@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.8.6'
+$Version         = '0.8.7'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -375,7 +375,7 @@ $tabLoc.Controls.Add($btnStatus)
 $tabLoc.Controls.Add($btnOptimise)
 $tipLoc = New-Object System.Windows.Forms.ToolTip
 $tipLoc.SetToolTip($chkRestart, 'Not needed: time zones change at once, Gaia needs no restart, and Windows uses the new keyboard at the next log-on. Tick only if a VM does not pick up the change.')
-$tipLoc.SetToolTip($btnOptimise, 'Removes old SmartConsole versions; switches off Windows Search, SysMain, telemetry, background tasks, hibernation and error reporting; best-performance visual effects; High performance power. No restarts.')
+$tipLoc.SetToolTip($btnOptimise, 'Removes old SmartConsole versions; switches off Windows Search, SysMain, telemetry, Store app auto-updates, background tasks, hibernation and error reporting; best-performance visual effects; High performance power. No restarts.')
 
 $lblLocStatus = New-Label '' 16 198 920 44 $FontBold
 $tabLoc.Controls.Add($lblLocStatus)
@@ -493,7 +493,7 @@ $btnOptimise.Add_Click({
     $keep = @('R82'); if ($opt -and $opt.keepSmartConsole) { $keep = @($opt.keepSmartConsole | ForEach-Object { [string]$_ }) }
     $msg = "This tidies up the Windows lab VMs (no restarts):`r`n`r`n" +
            "- removes SmartConsole versions other than $($keep -join ', ')`r`n" +
-           "- switches off Windows Search, SysMain and telemetry`r`n" +
+           "- switches off Windows Search, SysMain, telemetry and Microsoft Store app auto-updates`r`n" +
            "- removes OneDrive set-up at log-on, and VMware Tools on the servers`r`n" +
            "- sets the High performance power plan and clears the update download cache`r`n" +
            "- switches off background tasks (incl. weekly disk optimisation), hibernation, error reporting and, on servers, Print Spooler`r`n" +

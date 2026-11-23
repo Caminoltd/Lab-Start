@@ -59,7 +59,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.4.0'
+$EngineVersion = '1.4.1'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -256,6 +256,17 @@ $WindowsOptimise = {
     # 4. High performance power plan
     $hp = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
     if ((& powercfg.exe /getactivescheme) -notmatch $hp) { & powercfg.exe /setactive $hp 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $did += 'High performance power plan' } }
+    # 4b. Microsoft Store app auto-updates: the Store updates its built-in apps over the lab's internet connection
+    #     (Xbox, Maps, Photos, ...), each install scanned by Defender - hours of disk load on a fresh lab.
+    #     The images switch Windows Update off, but the Store has its own installer, so set the Store policy.
+    $sk = 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore'
+    if ((Get-ItemProperty $sk -ErrorAction SilentlyContinue).AutoDownload -ne 2) {
+        # reg.exe rather than New-Item: a Group Policy refresh can briefly mark the Policies key for deletion
+        & reg.exe add 'HKLM\SOFTWARE\Policies\Microsoft\WindowsStore' /v AutoDownload /t REG_DWORD /d 2 /f 2>$null | Out-Null
+        $st = Get-ScheduledTask -TaskPath '\Microsoft\Windows\WindowsUpdate\' -TaskName 'Automatic App Update' -ErrorAction SilentlyContinue
+        if ($st -and $st.State -ne 'Disabled') { $st | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null }
+        if ((Get-ItemProperty $sk -ErrorAction SilentlyContinue).AutoDownload -eq 2) { $did += 'Store app auto-updates off' }
+    }
     # 5. Windows Update download cache (updates are not used in the lab)
     $wu = Get-Service wuauserv -ErrorAction SilentlyContinue
     $dl = 'C:\Windows\SoftwareDistribution\Download'
