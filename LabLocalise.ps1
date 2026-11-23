@@ -59,7 +59,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.4.1'
+$EngineVersion = '1.4.2'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -191,6 +191,13 @@ $WindowsOptimise = {
     $did = @()
     # 1. SmartConsole versions not in the keep list: delete folder, uninstall entry, Start menu / desktop shortcuts
     $removed = @(); $freed = 0
+    # Safety: never remove the newest SmartConsole on the VM (an R81.20 lab must keep R81.20 even if the keep
+    # list says R82), and never one that is running - it is skipped, not closed.
+    $scRoot = 'C:\Program Files (x86)\CheckPoint\SmartConsole'
+    $newest = @(Get-ChildItem $scRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^R\d+(\.\d+)*$' } |
+        Sort-Object { [version](($_.Name.Substring(1) + '.0.0') -replace '^(\d+\.\d+(\.\d+)?).*$', '$1') } | Select-Object -Last 1 | ForEach-Object { $_.Name })
+    $KeepSC = @($KeepSC) + $newest
+    $skipped = @()
     foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
         foreach ($e in @(Get-ChildItem $k -ErrorAction SilentlyContinue)) {
             $pr = Get-ItemProperty $e.PSPath -ErrorAction SilentlyContinue
@@ -200,7 +207,10 @@ $WindowsOptimise = {
             $loc = "C:\Program Files (x86)\CheckPoint\SmartConsole\$ver"
             if (-not (Test-Path $loc) -and $pr.InstallLocation -and (Test-Path $pr.InstallLocation)) { $loc = $pr.InstallLocation }
             if ($loc -and (Test-Path $loc) -and ($loc -match 'CheckPoint')) {
-                Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -like "$loc*" } catch { $false } } | Stop-Process -Force -ErrorAction SilentlyContinue
+                if (@(Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -like "$loc*" } catch { $false } }).Count) {
+                    if ($skipped -notcontains $ver) { $skipped += $ver }
+                    continue
+                }
                 $freed += [double](Get-ChildItem $loc -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
                 $empty = Join-Path $env:TEMP ('ls_empty_' + [IO.Path]::GetRandomFileName())
                 New-Item -ItemType Directory -Path $empty -Force | Out-Null
@@ -220,6 +230,7 @@ $WindowsOptimise = {
         }
         $did += ('SmartConsole ' + ($removed -join ', ') + ' removed (' + [math]::Round($freed / 1GB, 1) + ' GB)')
     }
+    if ($skipped.Count) { $did += ('SmartConsole ' + ($skipped -join ', ') + ' left (open)') }
     # 2. Background services that only cost CPU and disk in a lab
     $off = @()
     foreach ($n in 'WSearch', 'SysMain', 'DiagTrack') {

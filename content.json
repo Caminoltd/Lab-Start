@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "site": "https://caminoltd.github.io",
   "prepPage": "/lab-start/",
   "courses": [
@@ -1085,6 +1085,11 @@
       "keepSmartConsole": [
         "R82.10",
         "R82"
+      ]
+    },
+    "CTPS": {
+      "keepSmartConsole": [
+        "R81.20"
       ]
     }
   },
