@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 10,
   "site": "https://caminoltd.github.io",
   "prepPage": "/lab-start/",
   "courses": [
@@ -897,9 +897,16 @@
     ],
     "CTPS": [
       {
+        "name": "SmartConsole cleanup",
+        "desc": "Removes the old SmartConsole versions from A-GUI and keeps R81.20, the version this course uses. Frees several GB of disk space.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Don-Paterson/SmartConsoleCleanup/main/cleanup.ps1))) -NukeAll -NukeOnly -ProtectedVersion 'R81.20'",
+        "note": "Runs as administrator. Takes about 2 minutes. Optimise lab VMs (tab 1) does the same on every Windows VM.",
+        "elevated": true
+      },
+      {
         "name": "Traffic generator - policy commands",
         "desc": "Shows the API commands that add the traffic generator ports (TCP/UDP 5201-5202) and allow them in the DNS rule of Unified-Policy. Copy them into the SmartConsole command line.",
-        "note": "In SmartConsole, open Command Line (bottom left), paste the commands and press Enter. Then click Publish and install Unified-Policy on A-GW. If a service already exists, that line fails and the others still work. If the command line runs only the first line, paste them one at a time.",
+        "note": "In SmartConsole, open Command Line (bottom left) and paste. Each line is checked before it runs: press Enter to run them one at a time. Then click Publish and install Unified-Policy on A-GW. If a service already exists, that line fails and the others still work.",
         "text": [
           "add service-tcp name \"tcp-5201\" port \"5201\" comments \"Lab Start traffic generator (iperf3)\"",
           "add service-tcp name \"tcp-5202\" port \"5202\" comments \"Lab Start traffic generator (iperf3)\"",

@@ -909,8 +909,12 @@ function Fill-Extras {
         if ($code) {
             $c = $Content.extras.PSObject.Properties[$code]
             if ($c) {
-                # A course item with "before": "<name>" goes just above that item; others go at the end
+                # A course item with the same name as a default item replaces it (e.g. a course-specific version);
+                # one with "before": "<name>" goes just above that item; others go at the end
                 foreach ($ci in @($c.Value)) {
+                    $same = -1
+                    for ($i = 0; $i -lt $items.Count; $i++) { if ([string]$items[$i].name -eq [string]$ci.name) { $same = $i; break } }
+                    if ($same -ge 0) { $items[$same] = $ci; continue }
                     $at = -1
                     if ($ci.before) { for ($i = 0; $i -lt $items.Count; $i++) { if ([string]$items[$i].name -eq [string]$ci.before) { $at = $i; break } } }
                     if ($at -ge 0) { $l = [System.Collections.ArrayList]@($items); $l.Insert($at, $ci); $items = @($l) } else { $items += @($ci) }
