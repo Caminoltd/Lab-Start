@@ -1,6 +1,7 @@
 {
-  "version": 6,
+  "version": 7,
   "site": "https://caminoltd.github.io",
+  "prepPage": "/lab-start/",
   "courses": [
     {
       "code": "CPDA",
@@ -349,11 +350,11 @@
     },
     {
       "text": "Set keyboard and timezone (tab 1, Localise)",
-      "detail": "Choose your country and click Apply. The Windows VMs, including A-GUI, restart about a minute later. Lab Start opens again by itself when you log back in."
+      "detail": "Choose your country and click Apply. Nothing restarts: the keyboard and time zone change on all the VMs within a few minutes, and the Localise tab shows the progress."
     },
     {
-      "text": "Wait for all the VMs to restart (3 to 5 minutes)",
-      "detail": "Log back in to A-GUI when its login screen returns. The Gaia VMs restart too."
+      "text": "Only if you ticked Restart the VMs in tab 1: wait for them to restart",
+      "detail": "Skip this step if you left Restart unticked (the default). After a restart, log back in to A-GUI when its login screen returns. Lab Start opens again by itself."
     },
     {
       "text": "Check that the Localise tab says Done",
@@ -682,6 +683,74 @@
         "username": "admin",
         "password": "Chkp!234"
       }
+    ],
+    "CTPS": [
+      {
+        "system": "A-GUI",
+        "address": "10.1.1.201",
+        "username": ".\\admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (SmartConsole)",
+        "address": "10.1.1.101",
+        "username": "cpadmin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (Gaia Portal)",
+        "address": "https://10.1.1.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-SMS (SSH)",
+        "address": "10.1.1.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW (Gaia Portal)",
+        "address": "https://10.1.1.1:4434",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-GW (SSH)",
+        "address": "10.1.1.1",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-Host",
+        "address": "192.168.11.201",
+        "username": ".\\admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "A-DMZ (web server)",
+        "address": "192.168.12.101",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "Border-Router (SSH)",
+        "address": "203.0.113.254",
+        "username": "admin",
+        "password": "Chkp!234"
+      },
+      {
+        "system": "Attacker (Kali)",
+        "address": "198.51.100.201",
+        "username": "kali",
+        "password": "kali"
+      },
+      {
+        "system": "Expert mode",
+        "address": "N/A",
+        "username": "N/A",
+        "password": "Chkp!234"
+      }
     ]
   },
   "courseDocs": [
@@ -726,6 +795,42 @@
     {
       "match": "Licenses*",
       "desc": "Lab licences"
+    },
+    {
+      "match": "Check_Point_SmartConsole*",
+      "desc": "SmartConsole installers"
+    },
+    {
+      "match": "*JUMBO*",
+      "desc": "Jumbo Hotfix packages"
+    },
+    {
+      "match": "Configuration Scripts*",
+      "desc": "Scripts used in some labs"
+    },
+    {
+      "match": "BreakerScripts*",
+      "desc": "Break-and-fix scripts (troubleshooting labs)"
+    },
+    {
+      "match": "DiagnosticsView*",
+      "desc": "Check Point Diagnostics View"
+    },
+    {
+      "match": "ALPHA_CA*",
+      "desc": "The lab's certificate authority (CA) certificate"
+    },
+    {
+      "match": "E8*CheckPointVPN*",
+      "desc": "Check Point Endpoint VPN client installer"
+    },
+    {
+      "match": "Postman*",
+      "desc": "Postman, for the Management API labs"
+    },
+    {
+      "match": "postman_collection*",
+      "desc": "Postman collection for the Management API labs"
     }
   ],
   "notes": {

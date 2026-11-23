@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.8.5'
+$Version         = '0.8.6'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -69,13 +69,22 @@ $FallbackContentJson = @'
 }
 '@
 
+# content.json comes from the commit Lab Start started from; Refresh content switches to the newest commit,
+# so text published after Lab Start was opened shows up without restarting it.
+$script:ContentRaw = $RepoRaw
+function Update-ContentSource {
+    try {
+        $sha = Invoke-RestMethod -Uri 'https://api.github.com/repos/Caminoltd/Lab-Start/commits/main' -Headers @{ 'User-Agent' = 'LabStart'; 'Accept' = 'application/vnd.github.sha' } -TimeoutSec 10
+        if ("$sha" -match '^[0-9a-f]{40}$') { $script:ContentRaw = "https://raw.githubusercontent.com/Caminoltd/Lab-Start/$sha" }
+    } catch {}
+}
 function Get-LabContent {
     $json  = $null
     $cache = Join-Path $StateDir 'content.json'
     if (-not $NoContentDownload) {
         for ($try = 1; $try -le 2 -and -not $json; $try++) {
             try {
-                $url  = "$RepoRaw/content.json?" + (Get-Date -Format 'yyyyMMddHHmmss')
+                $url  = "$script:ContentRaw/content.json?" + (Get-Date -Format 'yyyyMMddHHmmss')
                 $json = (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10).Content
                 try { $null = $json | ConvertFrom-Json; Set-Content -Path $cache -Value $json -Encoding UTF8 } catch { $json = $null }
             } catch { $json = $null; if ($try -lt 2) { Start-Sleep -Seconds 3 } }
@@ -282,7 +291,7 @@ $tabs.Size = New-Object System.Drawing.Size(960, 520)
 $tabs.Anchor = 'Top, Bottom, Left, Right'
 $form.Controls.Add($tabs)
 
-$footer = New-Label "Lab Start $Version  |  github.com/Caminoltd/Lab-Start" 16 620 600 22
+$footer = New-Label "Lab Start $Version  |  github.com/Caminoltd/Lab-Start" 16 620 790 22
 $footer.Anchor = 'Bottom, Left'
 $footer.ForeColor = [System.Drawing.Color]::Gray
 $form.Controls.Add($footer)
@@ -719,7 +728,8 @@ $grid.Add_CellDoubleClick({
 function Get-ToolsFolder {
     $candidates = @(
         (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Check Point Tools'),
-        (Join-Path $env:PUBLIC 'Desktop\Check Point Tools')
+        (Join-Path $env:PUBLIC 'Desktop\Check Point Tools'),
+        'C:\inetpub\ftproot'   # older R81.20 images (e.g. CTPS) keep the tools in the FTP folder instead
     )
     foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
     return $null
@@ -727,7 +737,7 @@ function Get-ToolsFolder {
 function Get-CourseFolder([string]$Code) {
     $tf = Get-ToolsFolder
     if (-not $tf -or -not $Code) { return $null }
-    return (Get-ChildItem -Path $tf -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "$Code-*" } | Select-Object -First 1)
+    return (Get-ChildItem -Path $tf -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "$Code-*" -or $_.Name -like "${Code}_*" } | Select-Object -First 1)
 }
 $btnCredPdf.Add_Click({
     $code = Get-SelectedCourse
@@ -781,9 +791,12 @@ function Fill-Tools {
     $folder = Get-ToolsFolder
     if (-not $folder) {
         $g = $lvTools.Groups.Add('none', 'Check Point Tools')
-        Add-ToolItem $g '(folder not found)' 'No "Check Point Tools" folder on this desktop.' $null
+        Add-ToolItem $g '(folder not found)' 'No "Check Point Tools" folder on the desktop and no C:\inetpub\ftproot folder.' $null
+        $lblToolsTop.Text = 'Your course documents and the main tools from the "Check Point Tools" folder on the desktop. Double-click to open.'
         return
     }
+    $lblToolsTop.Text = $(if ($folder -like '*inetpub*') { "Your course documents and the main tools. This lab keeps them in $folder (there is no Check Point Tools folder on the desktop). Double-click to open." }
+                          else { 'Your course documents and the main tools from the "Check Point Tools" folder on the desktop. Double-click to open.' })
     $code  = Get-SelectedCourse
     $shown = @{}
 
@@ -860,7 +873,10 @@ $btnCoursePage.Add_Click({
     $url = (Get-SiteUrl) + '/' + $(if ($code) { $code.ToLower() + '/' } else { '' })
     try { Start-Process $url } catch {}
 })
-$btnPrepPage.Add_Click({ try { Start-Process ((Get-SiteUrl) + '/lab-preparation/') } catch {} })
+$btnPrepPage.Add_Click({
+    $path = $(if ($Content.prepPage) { [string]$Content.prepPage } else { '/lab-start/' })
+    try { Start-Process ((Get-SiteUrl) + $path) } catch {}
+})
 
 # ---- Tab 6: Extras ------------------------------------------------------------
 $tabExtras = New-Object System.Windows.Forms.TabPage
@@ -1208,7 +1224,14 @@ $cbCourse.Add_SelectedIndexChanged({
     Fill-Credentials; Fill-Tools; Fill-Notes; Fill-Extras; Fill-Gaia
     if (Test-BookmarksAdded) { Update-Bookmarks }   # keep bookmarks the student added in step with the course
 })
-$btnRefresh.Add_Click({ Set-Busy $true; $script:Content = Get-LabContent; Fill-All; Set-Busy $false })
+$btnRefresh.Add_Click({
+    Set-Busy $true
+    Update-ContentSource
+    $script:Content = Get-LabContent
+    Fill-All
+    Set-Busy $false
+    $footer.Text = "Lab Start $Version  |  github.com/Caminoltd/Lab-Start  |  content v$($Content.version) refreshed at " + (Get-Date -Format 'HH:mm')
+})
 
 # Size the fixed-layout controls on tabs 1 and 2 to the tab (keeps them inside the window at any DPI)
 function Fit-Tabs {
