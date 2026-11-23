@@ -59,7 +59,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.4.2'
+$EngineVersion = '1.4.3'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -186,7 +186,7 @@ if exist c:\scripts\local_changes.ps1 start /MIN PowerShell.exe -NoProfile -Exec
 
 # Optimise mode: runs on each Windows VM (and locally on RDP-HOST). Reversible clean-up, no restart.
 $WindowsOptimise = {
-    param([string[]]$KeepSC)
+    param([string[]]$KeepSC, [bool]$SkipSC = $false)   # SkipSC: leave SmartConsole alone (RDP-HOST: slow, small VM, nobody uses it there)
     $ErrorActionPreference = 'Continue'
     $did = @()
     # 1. SmartConsole versions not in the keep list: delete folder, uninstall entry, Start menu / desktop shortcuts
@@ -198,7 +198,8 @@ $WindowsOptimise = {
         Sort-Object { [version](($_.Name.Substring(1) + '.0.0') -replace '^(\d+\.\d+(\.\d+)?).*$', '$1') } | Select-Object -Last 1 | ForEach-Object { $_.Name })
     $KeepSC = @($KeepSC) + $newest
     $skipped = @()
-    foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
+    $uninstallKeys = $(if ($SkipSC) { @() } else { @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') })
+    foreach ($k in $uninstallKeys) {
         foreach ($e in @(Get-ChildItem $k -ErrorAction SilentlyContinue)) {
             $pr = Get-ItemProperty $e.PSPath -ErrorAction SilentlyContinue
             if (-not ("$($pr.DisplayName)" -match '^Check Point SmartConsole (R[\d.]+)')) { continue }
@@ -552,11 +553,14 @@ try {
     if ($Mode -eq 'optimise') { $applyBlock = $WindowsOptimise; $applyArgs = @(, [string[]]$KeepSmartConsole) }
     else { $applyBlock = $WindowsApply; $applyArgs = @($WindowsTimezone, [string[]]$Languages, $UserScript, $doReboot, $RebootDelaySeconds) }
 
-    # 1. RDP-HOST itself (local, never restarted)
-    Set-Status 'running' 'Applying to RDP-HOST'
-    if ($Mode -eq 'optimise') { $local = & $WindowsOptimise $KeepSmartConsole } else { $local = & $WindowsApply $WindowsTimezone $Languages $UserScript $false 0 }
-    $script:HostResults['local'] = [pscustomobject]@{ ip = 'local'; kind = 'Windows'; name = $env:COMPUTERNAME; ok = $true; result = 'done (' + ($local -split '\|', 2)[1] + ')' }
-    Write-Log ("$env:COMPUTERNAME (this machine): " + $script:HostResults['local'].result)
+    # 1. RDP-HOST itself (local, never restarted). Localise: done first (quick). Optimise: runs alongside the other
+    #    VMs below, without the SmartConsole clean-up, so the smallest VM in the lab does not hold the others up.
+    if ($Mode -ne 'optimise') {
+        Set-Status 'running' 'Applying to RDP-HOST'
+        $local = & $WindowsApply $WindowsTimezone $Languages $UserScript $false 0
+        $script:HostResults['local'] = [pscustomobject]@{ ip = 'local'; kind = 'Windows'; name = $env:COMPUTERNAME; ok = $true; result = 'done (' + ($local -split '\|', 2)[1] + ')' }
+        Write-Log ("$env:COMPUTERNAME (this machine): " + $script:HostResults['local'].result)
+    }
 
     # 2. Windows VMs and Gaia hosts in parallel
     $gaiaLines = @(
@@ -574,6 +578,19 @@ try {
     $pool = [runspacefactory]::CreateRunspacePool(1, 10)
     $pool.Open()
     $jobs = @()
+    if ($Mode -eq 'optimise') {
+        $localWorker = {
+            param([string]$Text, [string[]]$Keep)
+            $r = [ordered]@{ ip = 'this machine'; kind = 'Windows'; name = $env:COMPUTERNAME; ok = $false; result = '' }
+            try { $out = & ([scriptblock]::Create($Text)) $Keep $true; $r.ok = $true; $r.result = 'done (' + (([string]$out) -split '\|', 2)[1] + ')' }
+            catch { $r.result = 'failed: ' + $_.Exception.Message }
+            [pscustomobject]$r
+        }
+        $ps = [powershell]::Create(); $ps.RunspacePool = $pool
+        [void]$ps.AddScript($localWorker).AddArgument($WindowsOptimise.ToString()).AddArgument([string[]]$KeepSmartConsole)
+        $jobs += [pscustomobject]@{ Key = 'local'; Ip = 'this machine'; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
+        $script:HostResults['local'] = [pscustomobject]@{ ip = 'this machine'; kind = 'Windows'; name = $env:COMPUTERNAME; ok = $false; result = 'working' }
+    }
     foreach ($ip in $WindowsHosts) {
         $ps = [powershell]::Create(); $ps.RunspacePool = $pool
         [void]$ps.AddScript($WindowsWorker).AddArgument($ip).AddArgument([string[]]@($DomainUser, $LocalUser, '.\admin')).AddArgument($Password).AddArgument($applyBlock).AddArgument([object[]]$applyArgs)
