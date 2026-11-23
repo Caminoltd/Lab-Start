@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.8.7'
+$Version         = '0.8.8'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -906,7 +906,17 @@ function Fill-Extras {
     $items = @()
     if ($Content.extras) {
         $d = $Content.extras.PSObject.Properties['default']; if ($d) { $items += @($d.Value) }
-        if ($code) { $c = $Content.extras.PSObject.Properties[$code]; if ($c) { $items += @($c.Value) } }
+        if ($code) {
+            $c = $Content.extras.PSObject.Properties[$code]
+            if ($c) {
+                # A course item with "before": "<name>" goes just above that item; others go at the end
+                foreach ($ci in @($c.Value)) {
+                    $at = -1
+                    if ($ci.before) { for ($i = 0; $i -lt $items.Count; $i++) { if ([string]$items[$i].name -eq [string]$ci.before) { $at = $i; break } } }
+                    if ($at -ge 0) { $l = [System.Collections.ArrayList]@($items); $l.Insert($at, $ci); $items = @($l) } else { $items += @($ci) }
+                }
+            }
+        }
     }
     foreach ($x in $items) {
         $it = New-Object System.Windows.Forms.ListViewItem([string]$x.name)
@@ -920,9 +930,32 @@ function Fill-Extras {
         [void]$lvExtras.Items.Add($it)
     }
 }
+# Extras with "text" instead of "command": show the text to copy (e.g. API commands for the SmartConsole command line)
+function Show-ExtraText($x) {
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = "Lab Start - $($x.name)"; $f.StartPosition = 'CenterParent'; $f.Size = New-Object System.Drawing.Size(980, 520); $f.MinimizeBox = $false
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Dock = 'Top'; $lbl.Height = 64; $lbl.Padding = New-Object System.Windows.Forms.Padding(8)
+    $lbl.Text = [string]$(if ($x.note) { $x.note } else { $x.desc })
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.Dock = 'Fill'; $tb.Multiline = $true; $tb.ReadOnly = $true; $tb.ScrollBars = 'Both'; $tb.WordWrap = $false
+    $tb.Font = New-Object System.Drawing.Font('Consolas', 10)
+    $tb.Text = (@($x.text) | ForEach-Object { [string]$_ }) -join "`r`n"
+    $pnl = New-Object System.Windows.Forms.Panel; $pnl.Dock = 'Bottom'; $pnl.Height = 44
+    $bCopy = New-Object System.Windows.Forms.Button; $bCopy.Text = 'Copy all'; $bCopy.SetBounds(8, 8, 120, 28)
+    $bClose = New-Object System.Windows.Forms.Button; $bClose.Text = 'Close'; $bClose.SetBounds(136, 8, 100, 28)
+    $lblC = New-Object System.Windows.Forms.Label; $lblC.SetBounds(250, 13, 600, 22)
+    $bCopy.Add_Click({ [System.Windows.Forms.Clipboard]::SetText($tb.Text); $lblC.Text = 'Copied. Paste it into the SmartConsole command line.' }.GetNewClosure())
+    $bClose.Add_Click({ $f.Close() }.GetNewClosure())
+    $pnl.Controls.AddRange(@($bCopy, $bClose, $lblC))
+    $f.Controls.Add($tb); $f.Controls.Add($pnl); $f.Controls.Add($lbl)
+    $tb.BringToFront()
+    [void]$f.ShowDialog($form)
+}
 function Invoke-Extra {
     if ($lvExtras.SelectedItems.Count -eq 0 -or -not $lvExtras.SelectedItems[0].Tag) { $lblExtraMsg.Text = 'Select a tool first.'; return }
     $x = $lvExtras.SelectedItems[0].Tag
+    if ($x.text) { Show-ExtraText $x; return }
     $q = "Run '$($x.name)'?`r`n`r`n$($x.desc)"
     if ($x.note) { $q += "`r`n`r`n$($x.note)" }
     if ([System.Windows.Forms.MessageBox]::Show($q, 'Lab Start - Extras', 'YesNo', 'Question') -ne [System.Windows.Forms.DialogResult]::Yes) { return }
