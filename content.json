@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 12,
   "site": "https://caminoltd.github.io",
   "prepPage": "/lab-start/",
   "courses": [
@@ -945,10 +945,38 @@
         "elevated": true
       },
       {
+        "name": "TP test - curl IPS lab",
+        "desc": "The curl IPS exercise: from Kali to A-DMZ-NAT, a normal request, a directory traversal and an SQL injection test request. Shows Allowed / Prevented, then the new IPS logs read from A-SMS.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test Curl",
+        "note": "Runs as administrator. Kali needs SSH on. Reading the logs needs admin's shell on A-SMS to be bash. Add -From AGUI to send from A-GUI to A-DMZ instead. Takes 1-3 minutes.",
+        "elevated": true
+      },
+      {
+        "name": "TP test - curl IPS lab (extended)",
+        "desc": "The curl IPS exercise plus well-known web attack test patterns (PHP-CGI, php://filter, command injection, Log4Shell, Spring4Shell, Shellshock, XSS, sqlmap User-Agent), with the protection that fired for each.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test Curl -Advanced",
+        "note": "Runs as administrator. Kali needs SSH on. The PHP-FPM pattern is rejected by IIS itself (HTTP 400), not by IPS. Takes 2-4 minutes.",
+        "elevated": true
+      },
+      {
         "name": "TP test - DoS flood (penalty box)",
-        "desc": "Runs an ICMP flood from Kali at the gateway for 20 seconds, for the Lab 10A penalty box / rate limit demo.",
-        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test Flood -Seconds 20",
-        "note": "Runs as administrator. Kali needs SSH on. Stops itself after 20 seconds.",
+        "desc": "Lab 10A penalty box commands on the Attacker: a 20-second ICMP flood at the gateway (hping3 --flood), then nikto against A-DMZ-NAT to test the penalty box.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test Flood",
+        "note": "Runs as administrator. Kali needs SSH on. The flood stops after 20 seconds; nikto is time-limited.",
+        "elevated": true
+      },
+      {
+        "name": "TP test - HTTP load on A-DMZ NAT",
+        "desc": "Sustained HTTP load against A-DMZ-NAT (openload-style), from the Attacker, for 15 minutes. Runs in the background on Kali. For the DoS / rate-limiting demo.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test Load",
+        "note": "Runs as administrator. Kali needs SSH on. Stops itself after ~15 minutes, or use \"TP test - stop HTTP load\".",
+        "elevated": true
+      },
+      {
+        "name": "TP test - stop HTTP load",
+        "desc": "Stops the background HTTP load on A-DMZ-NAT started by \"TP test - HTTP load on A-DMZ NAT\".",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test LoadStop",
+        "note": "Runs as administrator. Kali needs SSH on.",
         "elevated": true
       }
     ]
