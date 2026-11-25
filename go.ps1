@@ -35,7 +35,9 @@ try {
         '# Camino Lab Start launcher (desktop shortcut). Gets the latest go.ps1 and runs it.',
         "try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}",
         "`$go = Join-Path `$PSScriptRoot 'go.ps1'",
-        "Invoke-WebRequest -Uri ('$main/go.ps1?' + (Get-Date -Format 'yyyyMMddHHmmss')) -UseBasicParsing -OutFile `$go",
+        # newest commit, not 'main' (raw.githubusercontent.com serves 'main' up to ~5 minutes stale after a push)
+        "`$r = 'main'; try { `$sha = Invoke-RestMethod 'https://api.github.com/repos/Caminoltd/Lab-Start/commits/main' -Headers @{ 'User-Agent' = 'LabStart'; 'Accept' = 'application/vnd.github.sha' } -TimeoutSec 10; if (`"`$sha`" -match '^[0-9a-f]{40}`$') { `$r = `"`$sha`" } } catch {}",
+        "Invoke-WebRequest -Uri (`"https://raw.githubusercontent.com/Caminoltd/Lab-Start/`$r/go.ps1?`" + (Get-Date -Format 'yyyyMMddHHmmss')) -UseBasicParsing -OutFile `$go",
         "& `$go"
     )
     $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Lab Start.lnk'
