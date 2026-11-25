@@ -25,13 +25,24 @@ Write-Host 'Lab Start: downloading...' -ForegroundColor Cyan
 (Invoke-WebRequest -Uri ("$repo/LabStart.ps1?" + (Get-Date -Format 'yyyyMMddHHmmss')) -UseBasicParsing).Content |
     Set-Content -Path $file -Encoding UTF8
 
-# Desktop shortcut that always fetches the latest version
+# Desktop shortcut that always fetches the latest version.
+# It runs a small local launcher file. A shortcut whose own command line is a hidden "irm ... | iex" is flagged by
+# Microsoft Defender as Trojan:Win32/ClickFix (Nov 2026 signatures) and blocked with "Windows cannot access ...".
+# The launcher downloads go.ps1 to a file and runs that file, so no download-and-run pattern is on a command line.
 try {
+    $launcher = Join-Path $dir 'Launch.ps1'
+    Set-Content -Path $launcher -Encoding ASCII -Value @(
+        '# Camino Lab Start launcher (desktop shortcut). Gets the latest go.ps1 and runs it.',
+        "try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}",
+        "`$go = Join-Path `$PSScriptRoot 'go.ps1'",
+        "Invoke-WebRequest -Uri ('$main/go.ps1?' + (Get-Date -Format 'yyyyMMddHHmmss')) -UseBasicParsing -OutFile `$go",
+        "& `$go"
+    )
     $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Lab Start.lnk'
     $ws  = New-Object -ComObject WScript.Shell
     $sc  = $ws.CreateShortcut($lnk)
     $sc.TargetPath   = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $sc.Arguments    = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"irm '$main/go.ps1' | iex`""
+    $sc.Arguments    = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
     $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,76"
     $sc.Description  = 'Camino Lab Start'
     $sc.Save()

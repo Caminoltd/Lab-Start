@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.8.9'
+$Version         = '0.9.0'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -757,10 +757,24 @@ function Get-CourseFolder([string]$Code) {
     $match = { $_.Name -like "$Code-*" -or $_.Name -like "${Code}_*" }
     $tf = Get-ToolsFolder
     if ($tf) { $d = Get-ChildItem -Path $tf -Directory -ErrorAction SilentlyContinue | Where-Object $match | Select-Object -First 1; if ($d) { return $d } }
-    # Not in the lab image: the copy Lab Start downloaded
+    # Not in the lab image: download it (into the profile, no admin needed) ...
     Sync-CourseResources $Code
-    return (Get-ChildItem -Path $CourseResDir -Directory -ErrorAction SilentlyContinue | Where-Object $match | Select-Object -First 1)
+    $cached = Get-ChildItem -Path $CourseResDir -Directory -ErrorAction SilentlyContinue | Where-Object $match | Select-Object -First 1
+    if (-not $cached) { return $null }
+    # ... then put a copy next to the other courses' resources (e.g. C:\inetpub\ftproot), where students look.
+    # That folder needs admin rights: try directly first, then as the lab Admin (the same route as the bookmarks).
+    if ($tf -and -not $script:CourseCopyTried[$Code]) {
+        $script:CourseCopyTried[$Code] = $true
+        $target = Join-Path $tf $cached.Name
+        try { Copy-Item -Path $cached.FullName -Destination $tf -Recurse -Force -ErrorAction Stop }
+        catch {
+            try { Invoke-AsLabAdmin -Script { param($s, $d) Copy-Item -Path $s -Destination $d -Recurse -Force -ErrorAction Stop } -Arguments @($cached.FullName, $tf) } catch {}
+        }
+        if (Test-Path $target) { return (Get-Item $target) }
+    }
+    return $cached
 }
+$script:CourseCopyTried = @{}
 $btnCredPdf.Add_Click({
     $code = Get-SelectedCourse
     if (-not $code) { [void][System.Windows.Forms.MessageBox]::Show('Choose your course at the top right first.', 'Lab Start'); return }
