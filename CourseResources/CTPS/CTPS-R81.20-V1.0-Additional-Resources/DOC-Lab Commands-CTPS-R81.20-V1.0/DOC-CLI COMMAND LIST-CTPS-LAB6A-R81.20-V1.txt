@@ -1,0 +1,23 @@
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 6A: Threat Prevention Logs and Events
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 6A-1: Modify Threat Prevention Logs and Configure SmartEvent Settings
+No CLI Commands
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 6A-2: Test Threat Prevention Protections
+nikto -C all --nossl -h 203.0.113.121
+https://www.wicar.org/test-malware.html
+http://cpcheckme.com/checkme
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 6A-3: View Threat Prevention Logs and Events
+No CLI Commands
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 6A-4: Use Web SmartConsole to View Logs and Events
+https://10.1.1.101/smartconsole
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------

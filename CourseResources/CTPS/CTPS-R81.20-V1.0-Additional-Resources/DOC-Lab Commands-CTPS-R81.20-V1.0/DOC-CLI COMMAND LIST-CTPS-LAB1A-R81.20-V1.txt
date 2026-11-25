@@ -1,0 +1,30 @@
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 1A: Explore the Security Environment
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 1A-1: Verify the Security Environment
+No CLI Commands
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 1A-2: Verify Connectivity Between Systems
+ping 10.1.1.1
+ping 10.1.1.101
+ping 192.168.11.201
+ping 192.168.12.101
+ssh admin@10.1.1.1
+yes
+show version all
+fw stat
+exit
+ssh admin@10.1.1.101
+yes
+show version all
+fwm version
+exit
+https://10.1.1.101
+https://10.1.1.1:4434
+https://www.checkpoint.com
+https://192.168.12.101
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------

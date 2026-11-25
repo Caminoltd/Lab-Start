@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.8.8'
+$Version         = '0.8.9'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -734,10 +734,32 @@ function Get-ToolsFolder {
     foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
     return $null
 }
+# Course resources some lab images lack (content.json "courseResources"): downloaded from the repo into the
+# user's profile the first time the course is chosen. Files already there are not downloaded again.
+$CourseResDir = Join-Path $StateDir 'CourseResources'
+function Sync-CourseResources([string]$Code) {
+    if (-not $Code -or -not $Content.courseResources) { return }
+    $pp = $Content.courseResources.PSObject.Properties[$Code]; if (-not $pp) { return }
+    $r = $pp.Value
+    $dest = Join-Path $CourseResDir ([string]$r.folder)
+    foreach ($f in @($r.files)) {
+        $local = Join-Path $dest (([string]$f) -replace '/', '\')
+        if (Test-Path $local) { continue }
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path $local) | Out-Null
+            $url = "$script:ContentRaw/" + ((([string]$r.path + '/' + [string]$f) -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/')
+            Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 20 -OutFile $local
+        } catch { Remove-Item $local -Force -ErrorAction SilentlyContinue }
+    }
+}
 function Get-CourseFolder([string]$Code) {
+    if (-not $Code) { return $null }
+    $match = { $_.Name -like "$Code-*" -or $_.Name -like "${Code}_*" }
     $tf = Get-ToolsFolder
-    if (-not $tf -or -not $Code) { return $null }
-    return (Get-ChildItem -Path $tf -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "$Code-*" -or $_.Name -like "${Code}_*" } | Select-Object -First 1)
+    if ($tf) { $d = Get-ChildItem -Path $tf -Directory -ErrorAction SilentlyContinue | Where-Object $match | Select-Object -First 1; if ($d) { return $d } }
+    # Not in the lab image: the copy Lab Start downloaded
+    Sync-CourseResources $Code
+    return (Get-ChildItem -Path $CourseResDir -Directory -ErrorAction SilentlyContinue | Where-Object $match | Select-Object -First 1)
 }
 $btnCredPdf.Add_Click({
     $code = Get-SelectedCourse

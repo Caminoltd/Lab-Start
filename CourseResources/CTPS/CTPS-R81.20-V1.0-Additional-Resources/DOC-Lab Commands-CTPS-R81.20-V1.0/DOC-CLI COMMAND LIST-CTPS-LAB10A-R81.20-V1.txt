@@ -1,0 +1,42 @@
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 10A: Threat Prevention Performance Tuning
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 10A-1: Analyze Threat Prevention Performance
+expert
+hcp -r "Threat Prevention"
+fwaccel stats -s
+fwaccel stats -r
+fwaccel dos config set -p 100
+fwaccel dos config set -t 120
+fwaccel dos config set --enable-pbox
+sudo hping3 --flood -1 -d 500 203.0.113.1
+nikto -C all --nossl -h 203.0.113.121
+fwaccel stats -s
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 10A-2: Create a Penalty Box Exception and Null Profiles
+fwaccel dos pbox allow -a 198.51.100.201
+fwaccel dos pbox allow -s
+sudo hping3 --flood -1 -d 500 203.0.113.1
+nikto -C all --nossl -h 203.0.113.121
+nikto -C all --nossl -h 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 10A-3: Test the Panic Button Protocol
+ips stat
+fw stat -b AMW
+ips off -n
+fw amw unload
+ips stat
+fw stat -b AMW
+http://cpcheckme.com/checkme
+ips on -n
+fw amw fetch local
+ips stat
+fw stat -b AMW
+http://cpcheckme.com/checkme
+nikto -C all --nossl -h 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------

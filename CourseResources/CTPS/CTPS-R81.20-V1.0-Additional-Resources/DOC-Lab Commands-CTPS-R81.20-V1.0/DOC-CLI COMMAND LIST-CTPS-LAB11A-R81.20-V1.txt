@@ -1,0 +1,33 @@
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 11A: Troubleshoot and Customize Threat Prevention
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 11A-1: Add a Custom SNORT Rule
+alert tcp any any -> any 80 (msg:"Possible 62442 Elite exploit"; content:"rootmehaha";)
+https://www.checkpoint.com
+https://www.checkpoint.com/rootmehaha/
+https://www.checkpoint.com/rootmehaha/
+https://www.checkpoint.com/rootmehaha/
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 11A-2: Create and Test a Custom Threat Indicator
+observ99,http://www.cpcheckme.com/rootmehaha/,URL,high,high,AB,|NOTE:Malware Outbreak Today
+http://www.cpcheckme.com
+http://www.cpcheckme.com/rootmehaha/
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 11A-3: Observe Firewall Drops in Real Time
+http://www.cpcheckme.com/checkme
+fw ctl zdebug + drop | grep 192.168.11.201
+http://www.cpcheckme.com/checkme
+fw ctl debug 0
+ips protection <copied ips protection number>
+netstat -anp | grep :257
+http://www.cpcheckme.com/checkme
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 11A-4: Audit Configuration Changes
+No CLI Commands
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------

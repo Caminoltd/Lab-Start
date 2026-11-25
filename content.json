@@ -1,5 +1,5 @@
 {
-  "version": 12,
+  "version": 13,
   "site": "https://caminoltd.github.io",
   "prepPage": "/lab-start/",
   "courses": [
@@ -1169,6 +1169,26 @@
       ],
       "vyosVia": [
         "192.168.31.1@192.168.130.201"
+      ]
+    }
+  },
+  "courseResources": {
+    "CTPS": {
+      "folder": "CTPS-R81.20-V1.0-Additional-Resources",
+      "path": "CourseResources/CTPS/CTPS-R81.20-V1.0-Additional-Resources",
+      "files": [
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB10A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB11A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB1A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB2A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB3A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB4A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB5A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB6A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB7A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB8A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/DOC-CLI COMMAND LIST-CTPS-LAB9A-R81.20-V1.txt",
+        "DOC-Lab Commands-CTPS-R81.20-V1.0/master.txt"
       ]
     }
   }

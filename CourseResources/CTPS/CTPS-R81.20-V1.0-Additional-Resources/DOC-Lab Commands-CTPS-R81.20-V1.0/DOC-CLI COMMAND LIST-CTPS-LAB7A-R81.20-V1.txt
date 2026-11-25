@@ -1,0 +1,24 @@
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 7A: Configure Exceptions and Exclusions
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 7A-1: Use IPS and Threat Prevention Exceptions
+https://www.wicar.org/test-malware.html
+nikto -C all --nossl -h 203.0.113.121
+https://www.wicar.org/test-malware.html
+https://www.wicar.org/test-malware.html
+https://www.wicar.org/test-malware.html
+nikto -C all --nossl -h 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 7A-2: Create an Inspection Settings Exception
+No CLI Commands
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 7A-3: Create a Core Activations Exception
+sudo hping3 -1 -c 5 -d 5000 203.0.113.121
+sudo hping3 -1 -c 5 -d 5000 203.0.113.121
+sudo hping3 -1 -c 5 -d 5000 203.0.113.101
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------

@@ -1,0 +1,16 @@
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 9A: Modify Update Settings
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 9A-1: Verify Recent Updates
+cpview
+cpstat antimalware -f update_status
+
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 9A-2: Configure Update Settings
+http://cpcheckme.com/checkme
+http://cpcheckme.com/checkme
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------

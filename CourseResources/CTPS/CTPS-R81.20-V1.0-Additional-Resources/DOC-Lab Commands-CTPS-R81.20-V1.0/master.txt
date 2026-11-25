@@ -1,0 +1,171 @@
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 1A-2: Verify Connectivity Between Systems
+ping 10.1.1.1
+ping 10.1.1.101
+ping 192.168.11.201
+ping 192.168.12.101
+ssh admin@10.1.1.1
+yes
+show version all
+fw stat
+exit
+ssh admin@10.1.1.101
+yes
+show version all
+fwm version
+exit
+https://10.1.1.101
+https://10.1.1.1:4434
+https://www.checkpoint.com
+https://192.168.12.101
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+
+Task 2A-5: Configure and Test Core Protections
+ping 203.0.113.121
+sudo hping3 -1 -c 203.0.113.121
+sudo hping3 -1 -c 5 -d 2200 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+
+Task 6A-2: Test Threat Prevention Protections
+nikto -C all --nossl -h 203.0.113.121
+https://www.wicar.org/test-malware.html
+http://cpcheckme.com/checkme
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 6A-4: Use Web SmartConsole to View Logs and Events
+https://10.1.1.101/smartconsole
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 7A: Configure Exceptions and Exclusions
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 7A-1: Use IPS and Threat Prevention Exceptions
+https://www.wicar.org/test-malware.html
+nikto -C all --nossl -h 203.0.113.121
+https://www.wicar.org/test-malware.html
+https://www.wicar.org/test-malware.html
+https://www.wicar.org/test-malware.html
+nikto -C all --nossl -h 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 7A-3: Create a Core Activations Exception
+sudo hping3 -1 -c 5 -d 5000 203.0.113.121
+sudo hping3 -1 -c 5 -d 5000 203.0.113.121
+sudo hping3 -1 -c 5 -d 5000 203.0.113.101
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 8B-2: Generate and Verify Logs for Reporting
+http://cpcheckme.com/checkme
+http://sc1.checkpoint.com/za/images/threatwiki/pages/TestAntiBotBlade.html
+https://www.threat-cloud.com/test/files/LowConfidenceBot.html
+http://www.threat-cloud.com/test/files/MediumConfidenceBot.html
+http://www.threat-cloud.com/test/files/HighConfidenceBot.html
+http://www.eicar.org/download/eicar_com.zip
+http://cpcheckme.com/checkme
+http://sc1.checkpoint.com/za/images/threatwiki/pages/TestAntiBotBlade.html
+https://www.threat-cloud.com/test/files/LowConfidenceBot.html
+http://www.threat-cloud.com/test/files/MediumConfidenceBot.html
+http://www.threat-cloud.com/test/files/HighConfidenceBot.html
+http://www.eicar.org/download/eicar_com.zip
+nikto -C all --nossl -h 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+
+
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 9A: Modify Update Settings
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 9A-1: Verify Recent Updates
+cpview
+cpstat antimalware -f update_status
+
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 9A-2: Configure Update Settings
+http://cpcheckme.com/checkme
+http://cpcheckme.com/checkme
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 10A: Threat Prevention Performance Tuning
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 10A-1: Analyze Threat Prevention Performance
+expert
+hcp -r "Threat Prevention"
+fwaccel stats -s
+fwaccel stats -r
+fwaccel dos config set -p 100
+fwaccel dos config set -t 120
+fwaccel dos config set --enable-pbox
+sudo hping3 --flood -1 -d 500 203.0.113.1
+nikto -C all --nossl -h 203.0.113.121
+fwaccel stats -s
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 10A-2: Create a Penalty Box Exception and Null Profiles
+fwaccel dos pbox allow -a 198.51.100.201
+fwaccel dos pbox allow -s
+sudo hping3 --flood -1 -d 500 203.0.113.1
+nikto -C all --nossl -h 203.0.113.121
+nikto -C all --nossl -h 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 10A-3: Test the Panic Button Protocol
+ips stat
+fw stat -b AMW
+ips off -n
+fw amw unload
+ips stat
+fw stat -b AMW
+http://cpcheckme.com/checkme
+ips on -n
+fw amw fetch local
+ips stat
+fw stat -b AMW
+http://cpcheckme.com/checkme
+nikto -C all --nossl -h 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 11A: Troubleshoot and Customize Threat Prevention
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 11A-1: Add a Custom SNORT Rule
+alert tcp any any -> any 80 (msg:"Possible 62442 Elite exploit"; content:"rootmehaha";)
+https://www.checkpoint.com
+https://www.checkpoint.com/rootmehaha/
+https://www.checkpoint.com/rootmehaha/
+https://www.checkpoint.com/rootmehaha/
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 11A-2: Create and Test a Custom Threat Indicator
+observ99,http://www.cpcheckme.com/rootmehaha/,URL,high,high,AB,|NOTE:Malware Outbreak Today
+http://www.cpcheckme.com
+http://www.cpcheckme.com/rootmehaha/
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 11A-3: Observe Firewall Drops in Real Time
+http://www.cpcheckme.com/checkme
+fw ctl zdebug + drop | grep 192.168.11.201
+http://www.cpcheckme.com/checkme
+fw ctl debug 0
+ips protection <copied ips protection number>
+netstat -anp | grep :257
+http://www.cpcheckme.com/checkme
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------

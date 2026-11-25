@@ -1,0 +1,29 @@
+Check Point Certified Threat Prevention Specialist (CTPS)
+
+Lab 8A: Examine Threat Prevention Views and Reports
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 8B-1: Verify SmartEvent Activation
+No CLI Commands
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 8B-2: Generate and Verify Logs for Reporting
+http://cpcheckme.com/checkme
+http://sc1.checkpoint.com/za/images/threatwiki/pages/TestAntiBotBlade.html
+https://www.threat-cloud.com/test/files/LowConfidenceBot.html
+http://www.threat-cloud.com/test/files/MediumConfidenceBot.html
+http://www.threat-cloud.com/test/files/HighConfidenceBot.html
+http://www.eicar.org/download/eicar_com.zip
+http://cpcheckme.com/checkme
+http://sc1.checkpoint.com/za/images/threatwiki/pages/TestAntiBotBlade.html
+https://www.threat-cloud.com/test/files/LowConfidenceBot.html
+http://www.threat-cloud.com/test/files/MediumConfidenceBot.html
+http://www.threat-cloud.com/test/files/HighConfidenceBot.html
+http://www.eicar.org/download/eicar_com.zip
+nikto -C all --nossl -h 203.0.113.121
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+Task 8B-3: Configure SmartEvent Views and Reports
+No CLI Commands
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
