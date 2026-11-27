@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.9.2'
+$Version         = '0.9.3'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -437,11 +437,24 @@ function Show-LocaliseStatus([bool]$Quiet = $false) {
 $pollTimer.Add_Tick({ Show-LocaliseStatus -Quiet $true })
 $btnStatus.Add_Click({ Show-LocaliseStatus })
 
+# Localise and Optimise act on the chosen course's lab VMs (host lists and SmartConsole keep list differ per
+# course), so neither runs until a course is chosen. Returns the course code, or $null after telling the student.
+function Confirm-CourseChosen([string]$Action) {
+    $code = Get-SelectedCourse
+    if ($code) { return $code }
+    [void][System.Windows.Forms.MessageBox]::Show("Choose your course at the top right first.`r`n`r`n$Action uses the lab VMs of your course, and they differ between courses.", 'Lab Start - choose your course', 'OK', 'Information')
+    $cbCourse.Focus() | Out-Null
+    try { $cbCourse.DroppedDown = $true } catch {}
+    return $null
+}
+
 $btnApply.Add_Click({
     if ($cbCountry.SelectedIndex -lt 0 -or $cbKeyboard.SelectedIndex -lt 0) { return }
+    $course = Confirm-CourseChosen 'Setting the keyboard and time zone'
+    if (-not $course) { return }
     $ch = Get-LocChoice
     $noRestart = -not $chkRestart.Checked
-    $msg = "This sets the keyboard to $($ch.Keyboard.name) and the time zone to $($ch.Country.name) ($($ch.Country.gaiaRegion)/$($ch.Country.gaiaZone)) on all the lab VMs.`r`n`r`n"
+    $msg = "Course: $course`r`n`r`nThis sets the keyboard to $($ch.Keyboard.name) and the time zone to $($ch.Country.name) ($($ch.Country.gaiaRegion)/$($ch.Country.gaiaZone)) on all the $course lab VMs.`r`n`r`n"
     if ($noRestart) { $msg += "No VM restarts. The time zones change at once; on RDP-HOST the new keyboard applies at your next log-on.`r`n`r`nContinue?" }
     else { $msg += "About a minute after it starts, the Windows VMs restart - including this one (A-GUI). Save anything you have open first.`r`n`r`n" +
            "Lab Start opens again by itself when you log back in to A-GUI, and shows the result.`r`n`r`nContinue?" }
@@ -502,10 +515,11 @@ $btnApply.Add_Click({
 })
 
 $btnOptimise.Add_Click({
-    $code = Get-SelectedCourse
+    $code = Confirm-CourseChosen 'Optimise'
+    if (-not $code) { return }
     $opt = @(Get-CourseValue $Content.optimise $code) | Select-Object -First 1
     $keep = @('R82'); if ($opt -and $opt.keepSmartConsole) { $keep = @($opt.keepSmartConsole | ForEach-Object { [string]$_ }) }
-    $msg = "This tidies up the Windows lab VMs (no restarts):`r`n`r`n" +
+    $msg = "Course: $code`r`n`r`nThis tidies up the $code Windows lab VMs (no restarts):`r`n`r`n" +
            "- removes SmartConsole versions other than $($keep -join ', ')`r`n" +
            "- switches off Windows Update, Delivery Optimization and Microsoft Store app auto-updates`r`n" +
            "- switches off the Edge, Chrome, Firefox and OneDrive updaters`r`n" +
