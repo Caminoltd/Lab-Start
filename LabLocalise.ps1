@@ -55,11 +55,13 @@ param(
     [switch]$NoReboot,
     # 'localise' (keyboard + time zone) or 'optimise' (Windows VM clean-up, never restarts)
     [ValidateSet('localise', 'optimise')][string]$Mode = 'localise',
-    [string[]]$KeepSmartConsole = @('R82')
+    [string[]]$KeepSmartConsole = @('R82'),
+    # optimise: also switch off Defender definition/cloud updates (only where Defender runs and Check Point Endpoint is absent)
+    [switch]$QuietDefender
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.4.3'
+$EngineVersion = '1.6.0'
 
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
@@ -87,6 +89,7 @@ if ($SettingsFile) {
             'noReboot'           { if ($p.Value) { $NoReboot = $true } }
             'mode'               { $Mode = [string]$p.Value }
             'keepSmartConsole'   { $KeepSmartConsole = @($p.Value | ForEach-Object { [string]$_ }) }
+            'quietDefender'      { if ($p.Value) { $QuietDefender = $true } }
         }
     }
 }
@@ -136,38 +139,82 @@ if exist c:\scripts\local_changes.ps1 start /MIN PowerShell.exe -NoProfile -Exec
     }
     $tzNow = (Get-TimeZone).Id
     $extra = ''
-    if ($DoReboot) { & shutdown.exe /r /t $Delay /c 'Lab Start: applying keyboard and time zone' | Out-Null; $extra = ', restarting' }
+    # Logon screen and new profiles (engine 1.6.0): the images set German (0407) as the system default keyboard, and
+    # the logon screen, new RDP sessions and new users start from that default (HKU\.DEFAULT and the Default profile),
+    # not from the per-user list. Copy the chosen list there the same way as Region > Administrative > Copy settings.
+    $defKb = ''
+    try {
+        $tips = @(Get-WinUserLanguageList | ForEach-Object { @($_.InputMethodTips) } | Where-Object { $_ -match '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{8}$' } | Select-Object -Unique)
+        if ($tips.Count) {
+            $inp = for ($i = 0; $i -lt $tips.Count; $i++) { '<gs:InputLanguageID Action="add" ID="' + $tips[$i] + '"' + $(if ($i -eq 0) { ' Default="true"' } else { '' }) + '/>' }
+            $xml = '<gs:GlobalizationServices xmlns:gs="urn:longhornGlobalizationUnattend">' +
+                   '<gs:UserList><gs:User UserID="Current" CopySettingsToDefaultUserAcct="true" CopySettingsToSystemAcct="true"/></gs:UserList>' +
+                   '<gs:InputPreferences>' + ($inp -join '') + '</gs:InputPreferences></gs:GlobalizationServices>'
+            $xf = 'C:\scripts\LabStart\copy_intl.xml'
+            New-Item -ItemType Directory -Force -Path 'C:\scripts\LabStart' | Out-Null
+            Set-Content -Path $xf -Value $xml -Encoding UTF8
+            if (Get-Command Copy-UserInternationalSettingsToSystem -ErrorAction SilentlyContinue) {
+                # Windows 11 22H2+ / Server 2025: the built-in command does the same copy
+                Copy-UserInternationalSettingsToSystem -WelcomeScreen $true -NewUser $true
+            } else {
+                Start-Process -FilePath "$env:SystemRoot\System32\control.exe" -ArgumentList ('intl.cpl,,/f:"' + $xf + '"') -Wait -WindowStyle Hidden
+            }
+            Start-Sleep -Seconds 3
+            $pre = $null; try { $pre = (Get-ItemProperty 'Registry::HKEY_USERS\.DEFAULT\Keyboard Layout\Preload' -Name '1' -ErrorAction Stop).'1' } catch {}
+            $want = ($tips[0] -split ':')[1]
+            # A layout that differs from its language (e.g. en-US with a UK keyboard) is stored as a substitute ID
+            if ($pre) { try { $sub = (Get-ItemProperty 'Registry::HKEY_USERS\.DEFAULT\Keyboard Layout\Substitutes' -Name $pre -ErrorAction Stop).$pre; if ($sub) { $pre = $sub } } catch {} }
+            $defKb = $(if ($pre -and ($pre -eq $want -or $pre -like ('*' + $want.Substring(4)))) { ", logon-screen keyboard $want" } elseif ($pre) { ", logon-screen keyboard still $pre (Copy settings did not apply)" } else { '' })
+        }
+    } catch { $defKb = ', logon-screen keyboard not changed' }
+    $extra = $defKb
+    # The session keyboard script (sets the list and switches the active keyboard of an open session). Written on
+    # every run: used below for sessions already open, and by the reconnect task (engine 1.6.0) - a reconnected RDP
+    # session does not log on again, so the logon script does not run and the session kept the old keyboard.
+    try {
+        $dir = 'C:\scripts\LabStart'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $logS = Join-Path $dir 'session_keyboard.log'
+        $langList = ($Langs | ForEach-Object { "'$_'" }) -join ', '
+        $sess = @(
+            "`$ErrorActionPreference = 'SilentlyContinue'",
+            "Set-WinUserLanguageList -LanguageList $langList -Force -WarningAction SilentlyContinue",
+            "`$tip = @((Get-WinUserLanguageList)[0].InputMethodTips)[0]",
+            "`$klid = (`$tip -split ':')[-1]",
+            "Add-Type -Namespace LabStart -Name Kbd -MemberDefinition '[DllImport(""user32.dll"")] public static extern IntPtr LoadKeyboardLayout(string id, uint flags); [DllImport(""user32.dll"")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); [DllImport(""user32.dll"")] public static extern bool SystemParametersInfo(uint a, uint b, ref IntPtr c, uint d); [DllImport(""user32.dll"")] public static extern IntPtr FindWindow(string c, string w); [DllImport(""user32.dll"")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p); [DllImport(""user32.dll"")] public static extern IntPtr GetKeyboardLayout(uint t); [DllImport(""user32.dll"")] public static extern IntPtr GetForegroundWindow();'",
+            "`$h = [LabStart.Kbd]::LoadKeyboardLayout(`$klid, 1)",
+            "`$tray = [LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null)",
+            "if (`$tray -ne [IntPtr]::Zero) { [void][LabStart.Kbd]::PostMessage(`$tray, 0x50, [IntPtr]::Zero, `$h) }",
+            "`$fg = [LabStart.Kbd]::GetForegroundWindow(); if (`$fg -ne [IntPtr]::Zero -and `$fg -ne `$tray) { [void][LabStart.Kbd]::PostMessage(`$fg, 0x50, [IntPtr]::Zero, `$h) }",
+            "`$want = [Convert]::ToInt32(`$klid.Substring(4), 16)",
+            "function Get-TrayLang { `$t = [LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null); if (`$t -eq [IntPtr]::Zero) { return -1 }; `$p = 0; `$tid = [LabStart.Kbd]::GetWindowThreadProcessId(`$t, [ref]`$p); return ([LabStart.Kbd]::GetKeyboardLayout(`$tid).ToInt64() -band 0xFFFF) }",
+            "Start-Sleep -Milliseconds 800",
+            "`$how = 'switched'",
+            "`$cur = Get-TrayLang",
+            "if (`$cur -ne -1 -and `$cur -ne `$want) { if (`$tray -ne [IntPtr]::Zero) { [void][LabStart.Kbd]::PostMessage(`$tray, 0x50, [IntPtr]::Zero, `$h) }; Start-Sleep -Milliseconds 1500; `$cur = Get-TrayLang; `$how = 'taskbar (2nd try)' }",
+            "if (`$cur -ne -1 -and `$cur -ne `$want) { `$how = 'not switched - applies at next log-on' }",
+            "try { Add-Content -Path '$logS' -Value ((Get-Date -Format s) + ' ' + `$env:USERDOMAIN + '\' + `$env:USERNAME + ' ' + `$klid + ' ' + `$how) } catch {}"
+        ) -join "`r`n"
+        $sessFile = Join-Path $dir 'session_keyboard.ps1'
+        Set-Content -Path $sessFile -Value $sess -Encoding Unicode
+        $rcTask = 'LabStart-ReconnectKeyboard'
+        $rcUsers = ([Security.Principal.SecurityIdentifier]'S-1-5-32-545').Translate([Security.Principal.NTAccount]).Value
+        $cls = Get-CimClass -Namespace 'Root/Microsoft/Windows/TaskScheduler' -ClassName 'MSFT_TaskSessionStateChangeTrigger'
+        $trg = @(foreach ($chg in 1, 3, 8) {   # 1 console connect, 3 remote (RDP) connect, 8 session unlock
+            $t = New-CimInstance -CimClass $cls -ClientOnly; $t.StateChange = $chg; $t.Enabled = $true; $t })
+        $rcAct = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$sessFile`""
+        $rcPri = New-ScheduledTaskPrincipal -GroupId $rcUsers -RunLevel Limited
+        $rcSet = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew
+        Register-ScheduledTask -TaskName $rcTask -Action $rcAct -Principal $rcPri -Trigger $trg -Settings $rcSet -Force | Out-Null
+        $extra += ', keyboard re-applied on RDP reconnect'
+    } catch { $extra += ', reconnect task not set' }
+    if ($DoReboot) { & shutdown.exe /r /t $Delay /c 'Lab Start: applying keyboard and time zone' | Out-Null; $extra += ', restarting' }
     else {
         # No restart: run the logon script now inside every session that is already logged on (a task for the
         # Users group runs in each logged-on user's session), so the keyboard changes without logging off.
         # The script sets the language list and also switches the active keyboard of the open session (the same
         # as picking it from the taskbar), because an unchanged list does not refresh a session that is already open.
         try {
-            $dir = 'C:\scripts\LabStart'
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            $logS = Join-Path $dir 'session_keyboard.log'
-            $langList = ($Langs | ForEach-Object { "'$_'" }) -join ', '
-            $sess = @(
-                "`$ErrorActionPreference = 'SilentlyContinue'",
-                "Set-WinUserLanguageList -LanguageList $langList -Force -WarningAction SilentlyContinue",
-                "`$tip = @((Get-WinUserLanguageList)[0].InputMethodTips)[0]",
-                "`$klid = (`$tip -split ':')[-1]",
-                "Add-Type -Namespace LabStart -Name Kbd -MemberDefinition '[DllImport(""user32.dll"")] public static extern IntPtr LoadKeyboardLayout(string id, uint flags); [DllImport(""user32.dll"")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); [DllImport(""user32.dll"")] public static extern bool SystemParametersInfo(uint a, uint b, ref IntPtr c, uint d); [DllImport(""user32.dll"")] public static extern IntPtr FindWindow(string c, string w); [DllImport(""user32.dll"")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p); [DllImport(""user32.dll"")] public static extern IntPtr GetKeyboardLayout(uint t); [DllImport(""user32.dll"")] public static extern IntPtr GetForegroundWindow();'",
-                "`$h = [LabStart.Kbd]::LoadKeyboardLayout(`$klid, 1)",
-                "`$tray = [LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null)",
-                "if (`$tray -ne [IntPtr]::Zero) { [void][LabStart.Kbd]::PostMessage(`$tray, 0x50, [IntPtr]::Zero, `$h) }",
-                "`$fg = [LabStart.Kbd]::GetForegroundWindow(); if (`$fg -ne [IntPtr]::Zero -and `$fg -ne `$tray) { [void][LabStart.Kbd]::PostMessage(`$fg, 0x50, [IntPtr]::Zero, `$h) }",
-                "`$want = [Convert]::ToInt32(`$klid.Substring(4), 16)",
-                "function Get-TrayLang { `$t = [LabStart.Kbd]::FindWindow('Shell_TrayWnd', `$null); if (`$t -eq [IntPtr]::Zero) { return -1 }; `$p = 0; `$tid = [LabStart.Kbd]::GetWindowThreadProcessId(`$t, [ref]`$p); return ([LabStart.Kbd]::GetKeyboardLayout(`$tid).ToInt64() -band 0xFFFF) }",
-                "Start-Sleep -Milliseconds 800",
-                "`$how = 'switched'",
-                "`$cur = Get-TrayLang",
-                "if (`$cur -ne -1 -and `$cur -ne `$want) { if (`$tray -ne [IntPtr]::Zero) { [void][LabStart.Kbd]::PostMessage(`$tray, 0x50, [IntPtr]::Zero, `$h) }; Start-Sleep -Milliseconds 1500; `$cur = Get-TrayLang; `$how = 'taskbar (2nd try)' }",
-                "if (`$cur -ne -1 -and `$cur -ne `$want) { `$how = 'not switched - applies at next log-on' }",
-                "try { Add-Content -Path '$logS' -Value ((Get-Date -Format s) + ' ' + `$env:USERDOMAIN + '\' + `$env:USERNAME + ' ' + `$klid + ' ' + `$how) } catch {}"
-            ) -join "`r`n"
-            $sessFile = Join-Path $dir 'session_keyboard.ps1'
-            Set-Content -Path $sessFile -Value $sess -Encoding Unicode
             $since = Get-Date
             $users = ([Security.Principal.SecurityIdentifier]'S-1-5-32-545').Translate([Security.Principal.NTAccount]).Value
             $tn = 'LabStart-UserLocale'
@@ -178,15 +225,15 @@ if exist c:\scripts\local_changes.ps1 start /MIN PowerShell.exe -NoProfile -Exec
             Start-Sleep -Seconds 12
             Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue
             $n = @(Get-Content $logS -ErrorAction SilentlyContinue | Where-Object { try { [datetime]($_.Substring(0, 19)) -ge $since.AddSeconds(-2) } catch { $false } }).Count
-            $extra = $(if ($n) { ", keyboard switched in $n logged-on session(s)" } else { ', no logged-on session (keyboard applies at log-on)' })
-        } catch { $extra = ', keyboard at next log-on' }
+            $extra += $(if ($n) { ", keyboard switched in $n logged-on session(s)" } else { ', no logged-on session (keyboard applies at log-on)' })
+        } catch { $extra += ', keyboard at next log-on' }
     }
     return "$env:COMPUTERNAME|time zone now $tzNow$extra"
 }
 
 # Optimise mode: runs on each Windows VM (and locally on RDP-HOST). Reversible clean-up, no restart.
 $WindowsOptimise = {
-    param([string[]]$KeepSC, [bool]$SkipSC = $false)   # SkipSC: leave SmartConsole alone (RDP-HOST: slow, small VM, nobody uses it there)
+    param([string[]]$KeepSC, [bool]$SkipSC = $false, [bool]$QuietDefender = $false)   # SkipSC: leave SmartConsole alone (RDP-HOST: slow, small VM, nobody uses it there)
     $ErrorActionPreference = 'Continue'
     $did = @()
     # 1. SmartConsole versions not in the keep list: delete folder, uninstall entry, Start menu / desktop shortcuts
@@ -279,6 +326,96 @@ $WindowsOptimise = {
         if ($st -and $st.State -ne 'Disabled') { $st | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null }
         if ((Get-ItemProperty $sk -ErrorAction SilentlyContinue).AutoDownload -eq 2) { $did += 'Store app auto-updates off' }
     }
+    # 4c. Update agents and Windows maintenance (engine 1.5.0, from the 25 Nov 2026 launch tests in CTPS and CCSA):
+    #     browsers, OneDrive and Windows Update download and install on every launch and after every resume
+    #     (about 1 GB per VM for Chrome/Edge/WebView2 alone), and Windows starts its idle maintenance about
+    #     12 minutes after boot (disk clean-up, component clean-up, disk check, memory diagnostic). Policies are
+    #     reversible; nothing on the Gaia VMs is touched. Windows protects a few update tasks and services - those
+    #     are covered by the policies and reported, not fought.
+    $pol = {
+        param([string]$Key, [string]$Name, $Value, [string]$Type = 'REG_DWORD')
+        $cur = $null; try { $cur = (Get-ItemProperty ('Registry::' + ($Key -replace '^HKLM\\', 'HKEY_LOCAL_MACHINE\')) -Name $Name -ErrorAction Stop).$Name } catch {}
+        if ("$cur" -eq "$Value") { return $false }
+        & reg.exe add $Key /v $Name /t $Type /d $Value /f 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    }
+    $svcOff = {
+        param([string[]]$Names)
+        $n = 0
+        foreach ($sv in @(Get-Service -Name $Names -ErrorAction SilentlyContinue)) {
+            if ($sv.StartType -eq 'Disabled' -and $sv.Status -eq 'Stopped') { continue }
+            Stop-Service $sv.Name -Force -ErrorAction SilentlyContinue
+            Set-Service $sv.Name -StartupType Disabled -ErrorAction SilentlyContinue
+            & sc.exe config $sv.Name start= disabled 2>$null | Out-Null
+            if ((Get-Service $sv.Name -ErrorAction SilentlyContinue).StartType -eq 'Disabled') { $n++ }
+        }
+        $n
+    }
+    $taskOff = {
+        param([scriptblock]$Match)
+        $n = 0
+        foreach ($st in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object $Match)) {
+            if ($st.State -eq 'Disabled') { continue }
+            try { $st | Disable-ScheduledTask -ErrorAction Stop | Out-Null; $n++ } catch {}
+        }
+        $n
+    }
+    # Browser and OneDrive updaters
+    $ch = 0
+    $P = 'HKLM\SOFTWARE\Policies'
+    foreach ($v in @(@("$P\Microsoft\EdgeUpdate", 'UpdateDefault', 0), @("$P\Microsoft\EdgeUpdate", 'AutoUpdateCheckPeriodMinutes', 0),
+                     @("$P\Google\Update", 'UpdateDefault', 0), @("$P\Google\Update", 'AutoUpdateCheckPeriodMinutes', 0),
+                     @("$P\Mozilla\Firefox", 'DisableAppUpdate', 1), @("$P\Mozilla\Firefox", 'BackgroundAppUpdate', 0))) {
+        if (& $pol $v[0] $v[1] $v[2]) { $ch++ }
+    }
+    $ch += & $svcOff @('edgeupdate', 'edgeupdatem', 'gupdate', 'gupdatem', 'GoogleUpdater*', 'MozillaMaintenance')
+    $ch += & $taskOff { $_.TaskName -like 'MicrosoftEdgeUpdateTask*' -or $_.TaskName -like 'GoogleUpdate*' -or $_.TaskPath -like '\GoogleSystem\*' -or
+                        $_.TaskPath -like '\Mozilla\*' -or $_.TaskName -like 'OneDrive Standalone Update Task*' -or $_.TaskName -like 'OneDrive Reporting Task*' -or
+                        $_.TaskName -like 'OneDrive Per-Machine Standalone Update*' }
+    if ($ch) { $did += 'Edge, Chrome, Firefox and OneDrive updaters off' }
+    # Windows Update and Delivery Optimization (peer-to-peer download) - the images try, but updates still came in CTPS
+    $ch = 0
+    $W = "$P\Microsoft\Windows\WindowsUpdate"
+    foreach ($v in @(@($W, 'DoNotConnectToWindowsUpdateInternetLocations', 1), @($W, 'DisableWindowsUpdateAccess', 1),
+                     @($W, 'WUServer', 'http://127.0.0.1:8530', 'REG_SZ'), @($W, 'WUStatusServer', 'http://127.0.0.1:8530', 'REG_SZ'),
+                     @("$W\AU", 'UseWUServer', 1), @("$W\AU", 'NoAutoUpdate', 1), @("$W\AU", 'AUOptions', 1),
+                     @("$P\Microsoft\Windows\DeliveryOptimization", 'DODownloadMode', 99))) {
+        if ($v.Count -gt 3) { if (& $pol $v[0] $v[1] $v[2] $v[3]) { $ch++ } } elseif (& $pol $v[0] $v[1] $v[2]) { $ch++ }
+    }
+    $ch += & $svcOff @('wuauserv', 'UsoSvc', 'DoSvc', 'InstallService')
+    # Their scheduled tasks too (engine 1.6.0). Windows protects some of them; those stay covered by the policies above.
+    $ch += & $taskOff { $_.TaskPath -like '\Microsoft\Windows\WindowsUpdate\*' -or $_.TaskPath -like '\Microsoft\Windows\UpdateOrchestrator\*' -or
+                        $_.TaskPath -like '\Microsoft\Windows\InstallService\*' }
+    if ($ch) { $did += 'Windows Update and Delivery Optimization off' }
+    # Telemetry and compatibility inventory at the minimum (the DiagTrack service is switched off in step 2)
+    $ch = 0
+    foreach ($v in @(@("$P\Microsoft\Windows\DataCollection", 'AllowTelemetry', 0), @("$P\Microsoft\Windows\DataCollection", 'DoNotShowFeedbackNotifications', 1),
+                     @("$P\Microsoft\Windows\AppCompat", 'DisableInventory', 1), @("$P\Microsoft\Windows\AppCompat", 'AITEnable', 0),
+                     @("$P\Microsoft\SQMClient\Windows", 'CEIPEnable', 0))) {
+        if (& $pol $v[0] $v[1] $v[2]) { $ch++ }
+    }
+    if ($ch) { $did += 'telemetry policy at minimum' }
+    # Windows automatic (idle) maintenance and its heavy tasks
+    $ch = 0
+    if (& $pol 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance' 'MaintenanceDisabled' 1) { $ch++ }
+    $mt = @('\Microsoft\Windows\DiskCleanup\SilentCleanup', '\Microsoft\Windows\Servicing\StartComponentCleanup', '\Microsoft\Windows\Chkdsk\ProactiveScan',
+            '\Microsoft\Windows\DiskFootprint\StorageSense', '\Microsoft\Windows\DiskFootprint\Diagnostics', '\Microsoft\Windows\MemoryDiagnostic\RunFullMemoryDiagnostic',
+            '\Microsoft\Windows\MemoryDiagnostic\ProcessMemoryDiagnosticEvents', '\Microsoft\Windows\Registry\RegIdleBackup',
+            '\Microsoft\Windows\Power Efficiency Diagnostics\AnalyzeSystem', '\Microsoft\Windows\Diagnosis\Scheduled', '\Microsoft\Windows\Speech\SpeechModelDownloadTask',
+            '\Microsoft\Windows\Device Setup\Metadata Refresh', '\Microsoft\Windows\Sysmain\WsSwapAssessmentTask', '\Microsoft\Windows\Sysmain\ResPriStaticDbSync')
+    $ch += & $taskOff { $mt -contains ($_.TaskPath + $_.TaskName) }
+    if ($ch) { $did += 'Windows automatic maintenance off (disk/component clean-up, disk check, memory diagnostic)' }
+    # Optional (off unless the course asks for it): Defender definition and cloud updates - only where Defender is the
+    # antivirus actually running, and never where Check Point Endpoint is installed. Real-time protection stays on.
+    if ($QuietDefender) {
+        $cpEp = @(Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*Check Point Endpoint*' -or $_.DisplayName -like '*Harmony Endpoint*' }).Count -gt 0 -or
+                (Test-Path 'C:\Program Files (x86)\CheckPoint\Endpoint Security')
+        $mp = $null; try { $mp = Get-MpComputerStatus -ErrorAction Stop } catch {}
+        if ($cpEp) { $did += 'Defender left alone (Check Point Endpoint installed)' }
+        elseif ($mp -and $mp.AMServiceEnabled) {
+            try { Set-MpPreference -SignatureScheduleDay 8 -SignatureUpdateInterval 0 -MAPSReporting 0 -SubmitSamplesConsent 2 -SignatureDisableUpdateOnStartupWithoutEngine $true -ErrorAction Stop; $did += 'Defender definition and cloud updates off (real-time protection on)' } catch {}
+        }
+    }
     # 5. Windows Update download cache (updates are not used in the lab)
     $wu = Get-Service wuauserv -ErrorAction SilentlyContinue
     $dl = 'C:\Windows\SoftwareDistribution\Download'
@@ -286,7 +423,15 @@ $WindowsOptimise = {
         $sz = [double](Get-ChildItem $dl -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
         if ($sz -gt 50MB) { Get-ChildItem $dl -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; $did += ('update cache cleared (' + [math]::Round($sz / 1GB, 1) + ' GB)') }
     }
-    # 6. Scheduled tasks that only create background disk and CPU work in a lab (updates and .NET image building are left alone)
+    # 5b. Delivery Optimization cache (engine 1.6.0; 1.3-1.8 GB found in the CTPS and CCSA images). DoSvc was stopped in 4c.
+    $doSv = Get-Service DoSvc -ErrorAction SilentlyContinue
+    $doc = 'C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache'
+    if ((-not $doSv -or $doSv.Status -ne 'Running') -and (Test-Path $doc)) {
+        $sz = [double](Get-ChildItem $doc -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        if ($sz -gt 50MB) { Get-ChildItem $doc -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; $did += ('Delivery Optimization cache cleared (' + [math]::Round($sz / 1GB, 1) + ' GB)') }
+    }
+    # 6. Scheduled tasks that only create background disk and CPU work in a lab (.NET image building is left alone;
+    #    update agents and Windows maintenance are handled in 4c)
     $tasks = @(
         @('\Microsoft\Windows\Defrag\', 'ScheduledDefrag'),
         @('\Microsoft\Windows\Application Experience\', 'Microsoft Compatibility Appraiser'),
@@ -308,7 +453,22 @@ $WindowsOptimise = {
         $st = Get-ScheduledTask -TaskPath $t[0] -TaskName $t[1] -ErrorAction SilentlyContinue
         if ($st -and $st.State -ne 'Disabled') { $st | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null; $tOff++ }
     }
+    # The rest of the Application Experience folder (PcaPatchDbTask, MareBackup, AitAgent - names vary by build)
+    foreach ($st in @(Get-ScheduledTask -TaskPath '\Microsoft\Windows\Application Experience\' -ErrorAction SilentlyContinue)) {
+        if ($st.State -ne 'Disabled') { $st | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null; $tOff++ }
+    }
     if ($tOff) { $did += "$tOff background tasks off (incl. weekly disk optimisation)" }
+    # 6b. Stop runs already in progress (engine 1.6.0): disabling a task does not end a run that has started, and in the
+    #     26 Nov CTPS test CompatTelRunner, Firefox's background update and OneDrive's updater kept going for minutes
+    #     after the settings were in. Browser installers (setup.exe) are deliberately left to finish.
+    $stopped = 0
+    foreach ($st in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+            $_.State -eq 'Running' -and ($_.TaskPath -like '\Microsoft\Windows\Application Experience\*' -or
+            ($_.TaskPath -like '\Mozilla\*' -and $_.TaskName -like 'Firefox Background Update*') -or $_.TaskName -like 'OneDrive*Update*' -or $_.TaskName -like 'OneDrive Reporting Task*') })) {
+        try { $st | Stop-ScheduledTask -ErrorAction Stop; $stopped++ } catch {}
+    }
+    foreach ($pr in @(Get-Process -Name CompatTelRunner -ErrorAction SilentlyContinue)) { try { $pr | Stop-Process -Force -ErrorAction Stop; $stopped++ } catch {} }
+    if ($stopped) { $did += "$stopped background runs in progress stopped (compatibility appraiser, Firefox/OneDrive updaters)" }
     # 7. Hibernation (frees hiberfil.sys), Windows Error Reporting, Print Spooler on servers
     if (Test-Path 'C:\hiberfil.sys' -ErrorAction SilentlyContinue) { & powercfg.exe /hibernate off 2>$null | Out-Null; $did += 'hibernation off' }
     $wer = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
@@ -539,7 +699,7 @@ $ViaWorker = {
 Set-Content -Path $LogFile -Value ("Camino lab localisation engine $EngineVersion on $env:COMPUTERNAME - started " + (Get-Date)) -Encoding UTF8
 Write-Log "Settings: $Label"
 if ($Mode -eq 'optimise') {
-    Write-Log "  Optimise the Windows VMs: keep SmartConsole $($KeepSmartConsole -join ', '); no restarts"
+    Write-Log "  Optimise the Windows VMs: keep SmartConsole $($KeepSmartConsole -join ', '); update agents and maintenance off; Defender updates $(if ($QuietDefender) { 'off where safe' } else { 'left alone' }); no restarts"
     $GaiaHosts = @(); $LateGaiaHosts = @(); $LinuxHosts = @(); $VyosHosts = @(); $VyosViaHosts = @()
 } else {
     Write-Log "  Windows: language list $($Languages -join ', '); time zone '$WindowsTimezone'"
@@ -550,7 +710,7 @@ Set-Status 'running' 'Starting'
 
 try {
     $doReboot = -not $NoReboot
-    if ($Mode -eq 'optimise') { $applyBlock = $WindowsOptimise; $applyArgs = @(, [string[]]$KeepSmartConsole) }
+    if ($Mode -eq 'optimise') { $applyBlock = $WindowsOptimise; $applyArgs = @([string[]]$KeepSmartConsole, $false, [bool]$QuietDefender) }
     else { $applyBlock = $WindowsApply; $applyArgs = @($WindowsTimezone, [string[]]$Languages, $UserScript, $doReboot, $RebootDelaySeconds) }
 
     # 1. RDP-HOST itself (local, never restarted). Localise: done first (quick). Optimise: runs alongside the other
@@ -580,14 +740,14 @@ try {
     $jobs = @()
     if ($Mode -eq 'optimise') {
         $localWorker = {
-            param([string]$Text, [string[]]$Keep)
+            param([string]$Text, [string[]]$Keep, [bool]$Def)
             $r = [ordered]@{ ip = 'this machine'; kind = 'Windows'; name = $env:COMPUTERNAME; ok = $false; result = '' }
-            try { $out = & ([scriptblock]::Create($Text)) $Keep $true; $r.ok = $true; $r.result = 'done (' + (([string]$out) -split '\|', 2)[1] + ')' }
+            try { $out = & ([scriptblock]::Create($Text)) $Keep $true $Def; $r.ok = $true; $r.result = 'done (' + (([string]$out) -split '\|', 2)[1] + ')' }
             catch { $r.result = 'failed: ' + $_.Exception.Message }
             [pscustomobject]$r
         }
         $ps = [powershell]::Create(); $ps.RunspacePool = $pool
-        [void]$ps.AddScript($localWorker).AddArgument($WindowsOptimise.ToString()).AddArgument([string[]]$KeepSmartConsole)
+        [void]$ps.AddScript($localWorker).AddArgument($WindowsOptimise.ToString()).AddArgument([string[]]$KeepSmartConsole).AddArgument([bool]$QuietDefender)
         $jobs += [pscustomobject]@{ Key = 'local'; Ip = 'this machine'; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
         $script:HostResults['local'] = [pscustomobject]@{ ip = 'this machine'; kind = 'Windows'; name = $env:COMPUTERNAME; ok = $false; result = 'working' }
     }
@@ -637,6 +797,7 @@ try {
     $nSsh = $LinuxHosts.Count + $VyosHosts.Count + $VyosViaHosts.Count
     Set-Status 'running' ("Applying to $($WindowsHosts.Count) Windows VMs and $($GaiaHosts.Count + $LateGaiaHosts.Count) Gaia hosts" + $(if ($nSsh) { " and $nSsh Linux/VyOS" } else { '' }))
 
+    $startedAt = Get-Date; $lastNote = $null
     $deadline = (Get-Date).AddMinutes($(if ($Mode -eq 'optimise') { 20 } else { 8 }))
     while ((-not $lateStarted -or @($jobs | Where-Object { -not $_.Done }).Count -gt 0) -and (Get-Date) -lt $deadline) {
         if (-not $lateStarted -and @($jobs | Where-Object { $_.Key -like 'gaia:*' -and -not $_.Done }).Count -eq 0) {
@@ -655,9 +816,18 @@ try {
             $done = @($jobs | Where-Object { $_.Done }).Count
             Set-Status 'running' "Applying ($done of $($jobs.Count) hosts finished)"
         }
+        # Every 30 s, name the hosts still working, so a slow VM (1 GB RAM on some images) does not look like a hang
+        if (-not $lastNote -or ((Get-Date) - $lastNote).TotalSeconds -ge 30) {
+            $lastNote = Get-Date
+            $left = @($jobs | Where-Object { -not $_.Done } | ForEach-Object { $_.Ip })
+            if ($left.Count -and $left.Count -le 4) {
+                $mins = [math]::Floor(((Get-Date) - $startedAt).TotalMinutes)
+                Set-Status 'running' ("Applying ($($jobs.Count - $left.Count) of $($jobs.Count) finished; still working after $mins min: " + ($left -join ', ') + ')')
+            }
+        }
         Start-Sleep -Milliseconds 500
     }
-    foreach ($j in ($jobs | Where-Object { -not $_.Done })) { try { $j.PS.Stop() } catch {}; $script:HostResults[$j.Key] = [pscustomobject]@{ ip = $j.Ip; kind = '?'; ok = $false; result = 'failed: timed out' } }
+    foreach ($j in ($jobs | Where-Object { -not $_.Done })) { try { $j.PS.Stop() } catch {}; $script:HostResults[$j.Key] = [pscustomobject]@{ ip = $j.Ip; kind = '?'; ok = $false; result = $(if ($Mode -eq 'optimise') { 'failed: timed out after 20 min (settings already made on that VM stay; run Optimise again later)' } else { 'failed: timed out' }) } }
     $pool.Close()
 
     $all = @($script:HostResults.Values)

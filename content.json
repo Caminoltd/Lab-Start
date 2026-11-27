@@ -1,5 +1,5 @@
 {
-  "version": 13,
+  "version": 14,
   "site": "https://caminoltd.github.io",
   "prepPage": "/lab-start/",
   "courses": [
@@ -978,6 +978,32 @@
         "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/ctps-tests.ps1))) -Test LoadStop",
         "note": "Runs as administrator. Kali needs SSH on.",
         "elevated": true
+      }
+    ],
+    "CPVS": [
+      {
+        "name": "Poll sleep - check",
+        "desc": "Shows whether UPPAK poll sleep is on for the CPVS gateways (A-GW-01, A-GW-02, B-GW) and how many cores each one has at 90%+ busy. Changes nothing.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/CheckPoint-DPDK-Poll-Mode/main/Set-PollSleep.ps1))) -Action Check",
+        "note": "Asks for the gateways' admin password. Takes under a minute.",
+        "elevated": false,
+        "shell": "pwsh"
+      },
+      {
+        "name": "Poll sleep - enable",
+        "desc": "Turns on UPPAK poll sleep on the CPVS gateways, so their SND cores stop spinning at 100% when idle. Each gateway restarts, one at a time.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/CheckPoint-DPDK-Poll-Mode/main/Set-PollSleep.ps1))) -Action Enable",
+        "note": "Asks for the gateways' admin password. Takes about 10-15 minutes (one restart per gateway, then a 3-minute settle before the 'after' reading). Do not run it while a lab task is using the gateways.",
+        "elevated": false,
+        "shell": "pwsh"
+      },
+      {
+        "name": "Poll sleep - disable",
+        "desc": "Puts the CPVS gateways back to the shipped default (poll sleep off). Each gateway restarts, one at a time.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/CheckPoint-DPDK-Poll-Mode/main/Set-PollSleep.ps1))) -Action Disable",
+        "note": "Asks for the gateways' admin password. Takes about 10-15 minutes.",
+        "elevated": false,
+        "shell": "pwsh"
       }
     ]
   },

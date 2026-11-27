@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.9.0'
+$Version         = '0.9.2'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -182,6 +182,7 @@ $GetLocaliseStatus = {
         Time      = $(if ($s) { $s.time } else { '' })
         TaskState = $taskState
         Log       = $tail
+        Hosts     = $(if ($s -and $s.hosts) { @($s.hosts | ForEach-Object { [pscustomobject]@{ ip = [string]$_.ip; kind = [string]$_.kind; name = [string]$_.name; ok = [bool]$_.ok; result = [string]$_.result } }) } else { @() })
     }
 }
 
@@ -375,7 +376,7 @@ $tabLoc.Controls.Add($btnStatus)
 $tabLoc.Controls.Add($btnOptimise)
 $tipLoc = New-Object System.Windows.Forms.ToolTip
 $tipLoc.SetToolTip($chkRestart, 'Not needed: time zones change at once, Gaia needs no restart, and Windows uses the new keyboard at the next log-on. Tick only if a VM does not pick up the change.')
-$tipLoc.SetToolTip($btnOptimise, 'Removes old SmartConsole versions; switches off Windows Search, SysMain, telemetry, Store app auto-updates, background tasks, hibernation and error reporting; best-performance visual effects; High performance power. No restarts.')
+$tipLoc.SetToolTip($btnOptimise, 'Removes old SmartConsole versions; switches off Windows Update, Delivery Optimization, the Edge/Chrome/Firefox/OneDrive updaters, Store app auto-updates, Windows automatic maintenance, Windows Search, SysMain, telemetry, background tasks, hibernation and error reporting; best-performance visual effects; High performance power. No restarts.')
 
 $lblLocStatus = New-Label '' 16 198 920 44 $FontBold
 $tabLoc.Controls.Add($lblLocStatus)
@@ -394,7 +395,16 @@ function Show-LocaliseStatus([bool]$Quiet = $false) {
     Set-Busy $true
     try {
         $s = Invoke-OnRdpHost -ScriptBlock $GetLocaliseStatus
-        $txtLocLog.Text = $s.Log
+        # One line per lab VM first (from status.json on RDP-HOST), so a VM that did not take the change stands out;
+        # the full log follows underneath.
+        $hostLines = @(); $notDone = @()
+        foreach ($h in @($s.Hosts)) {
+            $who = $(if ($h.name) { "$($h.name) ($($h.ip))" } else { $h.ip })
+            $tag = $(if ($h.ok -and $h.result -match 'still [0-9A-Fa-f]{8}|not changed|not set') { 'CHECK' } elseif ($h.ok) { 'OK' } elseif ($h.result -like 'skipped*' -or $h.result -like 'not needed*') { 'SKIP' } elseif ($h.result -eq 'working') { '...' } else { 'FAIL' })
+            if ($tag -in 'FAIL', 'CHECK') { $notDone += $who }
+            $hostLines += ('{0,-6}{1,-8}{2,-30} {3}' -f $tag, $h.kind, $who, $h.result)
+        }
+        $txtLocLog.Text = $(if ($hostLines.Count) { "Per VM:`r`n" + ($hostLines -join "`r`n") + "`r`n`r`nLog:`r`n" + $s.Log } else { $s.Log })
         $txtLocLog.SelectionStart = $txtLocLog.Text.Length; $txtLocLog.ScrollToCaret()
         switch ($s.State) {
             'never-run' { $lblLocStatus.ForeColor = [System.Drawing.Color]::Black;     $lblLocStatus.Text = 'Not applied yet in this lab. Choose your country and click Apply.' }
@@ -409,6 +419,10 @@ function Show-LocaliseStatus([bool]$Quiet = $false) {
             }
             'failed'    { $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkRed;   $lblLocStatus.Text = "Failed: $($s.Detail)  - see the log below and tell your trainer." }
             default     { $lblLocStatus.ForeColor = [System.Drawing.Color]::Black;     $lblLocStatus.Text = "State: $($s.State)" }
+        }
+        if ($s.State -eq 'done' -and $notDone.Count) {
+            $lblLocStatus.ForeColor = [System.Drawing.Color]::DarkOrange
+            $lblLocStatus.Text += "  Check: " + ($notDone -join ', ') + " did not take the change (see Per VM below)."
         }
         if ($s.State -in 'done', 'failed', 'never-run') { $pollTimer.Stop() }
     }
@@ -493,7 +507,10 @@ $btnOptimise.Add_Click({
     $keep = @('R82'); if ($opt -and $opt.keepSmartConsole) { $keep = @($opt.keepSmartConsole | ForEach-Object { [string]$_ }) }
     $msg = "This tidies up the Windows lab VMs (no restarts):`r`n`r`n" +
            "- removes SmartConsole versions other than $($keep -join ', ')`r`n" +
-           "- switches off Windows Search, SysMain, telemetry and Microsoft Store app auto-updates`r`n" +
+           "- switches off Windows Update, Delivery Optimization and Microsoft Store app auto-updates`r`n" +
+           "- switches off the Edge, Chrome, Firefox and OneDrive updaters`r`n" +
+           "- switches off Windows automatic maintenance (disk clean-up, disk check, memory diagnostic)`r`n" +
+           "- switches off Windows Search, SysMain and telemetry`r`n" +
            "- removes OneDrive set-up at log-on, and VMware Tools on the servers`r`n" +
            "- sets the High performance power plan and clears the update download cache`r`n" +
            "- switches off background tasks (incl. weekly disk optimisation), hibernation, error reporting and, on servers, Print Spooler`r`n" +
@@ -503,6 +520,7 @@ $btnOptimise.Add_Click({
     Set-Busy $true
     try {
         $cfg = [ordered]@{ mode = 'optimise'; label = 'Optimise lab VMs'; keepSmartConsole = $keep }
+        if ($opt -and $opt.quietDefender) { $cfg.quietDefender = $true }   # per course in content.json; never applied where Check Point Endpoint is installed
         if ($Content.localiseHosts) {
             $lh = @(Get-CourseValue $Content.localiseHosts $code) | Select-Object -First 1
             if ($lh -and $lh.windows) { $cfg.windowsHosts = @($lh.windows) }
