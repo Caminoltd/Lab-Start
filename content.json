@@ -1,5 +1,5 @@
 {
-  "version": 17,
+  "version": 18,
   "site": "https://caminoltd.github.io",
   "prepPage": "/lab-start/",
   "courses": [
@@ -893,13 +893,6 @@
         "command": "foreach ($id in 'PuTTY.PuTTY','WinSCP.WinSCP','Notepad++.Notepad++','7zip.7zip') { Write-Host \"== $id\" -ForegroundColor Cyan; winget upgrade --id $id -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity }",
         "note": "Runs as administrator. Needs internet and takes a few minutes. PuTTY 0.72 in the lab has a known key-recovery flaw (CVE-2024-31497), fixed from 0.81.",
         "elevated": true
-      },
-      {
-        "name": "Lab inventory (trainer)",
-        "desc": "For the trainer: finds every VM in this lab (read-only) and writes the exact VM list for content.json, so Localise and Optimise use the VMs this course really has.",
-        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/lab-inventory.ps1)))",
-        "note": "Read-only, changes nothing. Takes 1-3 minutes. Start any switched-off VMs first. The result is also copied to the clipboard.",
-        "elevated": false
       }
     ],
     "CTPS": [
@@ -990,7 +983,7 @@
     "CPVS": [
       {
         "name": "Poll sleep - check",
-        "desc": "Shows whether UPPAK poll sleep is on for the CPVS gateways (A-GW-01, A-GW-02, B-GW) and how many cores each one has at 90%+ busy. Changes nothing.",
+        "desc": "Shows whether UPPAK poll sleep is on for the CPVS gateways (A-GW-01, A-GW-02, B-GW) and how many cores each one has at 90%+ busy. Changes nothing on the gateways, except that if the admin login shell is clish it is switched to bash (and saved), and left that way. Students then land in expert mode, not clish, when they log in as admin.",
         "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/CheckPoint-DPDK-Poll-Mode/main/Set-PollSleep.ps1))) -Action Check",
         "note": "Asks for the gateways' admin password. Takes under a minute.",
         "elevated": false,
@@ -1182,7 +1175,8 @@
         "192.168.111.201",
         "192.168.120.201",
         "192.168.130.201",
-        "192.0.2.201"
+        "192.0.2.201",
+        "172.31.1.1"
       ],
       "gaia": [
         "10.1.1.2",
