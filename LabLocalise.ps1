@@ -61,9 +61,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.6.3'
+$EngineVersion = '1.6.5'
 
-$GaiaTzOverride = @{}; $VyosTzOverride = @{}; $TzOverrideNote = ''; $VyosTzNote = ''
+$GaiaTzOverride = @{}; $VyosTzOverride = @{}; $TzOverrideNote = ''; $VyosTzNote = ''; $ClusterActive = $null
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
     $s = Get-Content -Raw -Path $SettingsFile | ConvertFrom-Json
@@ -88,6 +88,8 @@ if ($SettingsFile) {
             'vyosTimezoneOverrides' { foreach ($q in $p.Value.PSObject.Properties) { $VyosTzOverride[[string]$q.Name] = [string]$q.Value } }
             'timezoneOverrideNote'  { $TzOverrideNote = [string]$p.Value }       # why the Gaia overrides exist
             'vyosTimezoneOverrideNote' { $VyosTzNote = [string]$p.Value }       # why the VyOS overrides exist
+            # { "member": "<ip>", "peer": "<ip>", "note": "..." }: make that cluster member the Active one after Localise
+            'clusterActive'      { $ClusterActive = $p.Value }
             'extraLanguages'     { $ExtraLanguages = @($p.Value | ForEach-Object { [string]$_ }) }
             'password'           { $Password = [string]$p.Value }
             'domainUser'         { $DomainUser = [string]$p.Value }
@@ -882,6 +884,55 @@ try {
     }
     foreach ($j in ($jobs | Where-Object { -not $_.Done })) { try { $j.PS.Stop() } catch {}; $script:HostResults[$j.Key] = [pscustomobject]@{ ip = $j.Ip; kind = '?'; ok = $false; result = $(if ($Mode -eq 'optimise') { 'failed: timed out after 20 min (settings already made on that VM stay; run Optimise again later)' } else { 'failed: timed out' }) } }
     $pool.Close()
+
+    # 3. Cluster: make the member the lab guide expects the Active one (e.g. CPVS: A-GW-01, Labs 2A-3, 2B-4, 3A-1, 3B-2).
+    #    The peer is set to admin down so the member takes over, then straight back up; with the cluster's usual
+    #    "maintain current active" setting the member stays Active. Gaia clish only; nothing is saved to the config.
+    if ($Mode -eq 'localise' -and $ClusterActive -and $ClusterActive.member -and $ClusterActive.peer -and (Test-Path $PlinkPath)) {
+        $cm = [string]$ClusterActive.member; $cp = [string]$ClusterActive.peer
+        $why = $(if ($ClusterActive.note) { " ($($ClusterActive.note))" } else { '' })
+        $nm = { param($ip) $h = $script:HostResults["gaia:$ip"]; if ($h -and $h.name) { "$($h.name) ($ip)" } else { $ip } }
+        $mName = & $nm $cm; $pName = & $nm $cp
+        function Invoke-Clish([string]$Ip, [string]$Cmd) {
+            foreach ($c in @($Cmd, "clish -c `"$Cmd`"")) {      # clish login shell first, then a bash login shell
+                $psi = New-Object System.Diagnostics.ProcessStartInfo
+                $psi.FileName = $PlinkPath; $psi.Arguments = "-batch -ssh -l admin -pw `"$Password`" $Ip `"" + ($c -replace '"', '"') + '"'
+                $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+                $pr = [System.Diagnostics.Process]::Start($psi); $o = $pr.StandardOutput.ReadToEndAsync(); $e = $pr.StandardError.ReadToEndAsync()
+                if (-not $pr.WaitForExit(45000)) { try { $pr.Kill() } catch {} }
+                $out = "$($o.Result)`n$($e.Result)"
+                if ($out -notmatch 'command not found') { return $out }
+            }
+            return $out
+        }
+        function Get-LocalClusterState([string]$Ip) {
+            $o = Invoke-Clish $Ip 'show cluster state'
+            $l = @($o -split "`r?`n" | Where-Object { $_ -match '\(local\)' }) | Select-Object -First 1
+            if ($l -match '\b(ACTIVE|STANDBY|DOWN|READY|INIT|LOST)\b') { return $Matches[1] }
+            return '?'
+        }
+        if ($doReboot) { Write-Log "Cluster: $mName not made Active - the VMs are restarting (run Localise again without restart, or fail over by hand)" }
+        elseif (-not ($script:HostResults["gaia:$cm"].ok -and $script:HostResults["gaia:$cp"].ok)) { Write-Log "Cluster: left as it is - $mName or $pName was not reachable" }
+        else {
+            Set-Status 'running' "Making $mName the Active cluster member"
+            $sm = Get-LocalClusterState $cm
+            if ($sm -eq 'ACTIVE') { Write-Log "Cluster: $mName is already the Active member$why" }
+            elseif ((Get-LocalClusterState $cp) -ne 'ACTIVE') { Write-Log "Cluster: left as it is - $mName is $sm and $pName is not Active either (check: show cluster state)" }
+            else {
+                Write-Log "Cluster: $pName is Active - handing over to $mName$why"
+                [void](Invoke-Clish $cp 'lock database override')
+                [void](Invoke-Clish $cp 'set cluster member admin down')
+                $deadline2 = (Get-Date).AddSeconds(60)
+                do { Start-Sleep -Seconds 5; $sm = Get-LocalClusterState $cm } while ($sm -ne 'ACTIVE' -and (Get-Date) -lt $deadline2)
+                [void](Invoke-Clish $cp 'lock database override')
+                [void](Invoke-Clish $cp 'set cluster member admin up')      # always, so the peer never stays down
+                Start-Sleep -Seconds 15
+                $sm = Get-LocalClusterState $cm; $sp = Get-LocalClusterState $cp
+                if ($sm -eq 'ACTIVE') { Write-Log "Cluster: $mName is now the Active member, $pName is $sp$why" }
+                else { Write-Log "Cluster: WARNING - $mName is $sm and $pName is $sp after the handover (the cluster may prefer $pName; check: show cluster state)" }
+            }
+        }
+    }
 
     $all = @($script:HostResults.Values)
     $ok = @($all | Where-Object { $_.ok }).Count

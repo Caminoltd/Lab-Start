@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.9.5'
+$Version         = '0.9.6'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -469,6 +469,11 @@ $btnApply.Add_Click({
         $keepTz = @(@($lhc.gaiaTimezoneOverrides) | Where-Object { $_ } | ForEach-Object { $_.PSObject.Properties } | ForEach-Object {
             $ip = $_.Name; $nm = @(@(Get-CourseValue $Content.gaiaHosts $course) | Where-Object { $_.ip -eq $ip } | ForEach-Object { $_.name }) | Select-Object -First 1
             $(if ($nm) { "$nm ($ip)" } else { $ip }) + ": $($_.Value)" })
+        if ($lhc.clusterActive -and $lhc.clusterActive.member) {
+            $cip = [string]$lhc.clusterActive.member
+            $cnm = @(@(Get-CourseValue $Content.gaiaHosts $course) | Where-Object { $_.ip -eq $cip } | ForEach-Object { $_.name }) | Select-Object -First 1
+            $msg = $msg -replace "`r`n`r`nContinue\?$", ("`r`n`r`nAt the end, " + $(if ($cnm) { $cnm } else { $cip }) + " is made the Active cluster member, as your lab guide expects. VPN tunnels and SSH sessions to the cluster drop for a few seconds.`r`n`r`nContinue?")
+        }
         if ($keepTz) {
             $why = $(if ($lhc.timezoneOverrideNote) { " (needed for $($lhc.timezoneOverrideNote))" } else { '' })
             $msg = $msg -replace "`r`n`r`nContinue\?$", ("`r`n`r`nThese VMs keep the time zone your lab guide expects${why}:`r`n  " + ($keepTz -join "`r`n  ") + "`r`n`r`nContinue?")
@@ -502,6 +507,7 @@ $btnApply.Add_Click({
             if ($lh -and $lh.vyosTimezoneOverrides) { $cfg.vyosTimezoneOverrides = $lh.vyosTimezoneOverrides }
             if ($lh -and $lh.timezoneOverrideNote) { $cfg.timezoneOverrideNote = [string]$lh.timezoneOverrideNote }
             if ($lh -and $lh.vyosTimezoneOverrideNote) { $cfg.vyosTimezoneOverrideNote = [string]$lh.vyosTimezoneOverrideNote }
+            if ($lh -and $lh.clusterActive) { $cfg.clusterActive = $lh.clusterActive }
         }
         $settingsJson = ConvertTo-Json -InputObject ([pscustomobject]$cfg) -Depth 4
         $engine = Get-LocaliseEngine

@@ -1,5 +1,5 @@
 {
-  "version": 16,
+  "version": 17,
   "site": "https://caminoltd.github.io",
   "prepPage": "/lab-start/",
   "courses": [
@@ -1213,7 +1213,12 @@
         "192.168.31.1": "Europe/Vienna"
       },
       "timezoneOverrideNote": "CPVS Lab 7A",
-      "vyosTimezoneOverrideNote": "CPVS Lab Setup Guide"
+      "vyosTimezoneOverrideNote": "CPVS Lab Setup Guide",
+      "clusterActive": {
+        "member": "10.1.1.2",
+        "peer": "10.1.1.3",
+        "note": "CPVS Labs 2A-3, 2B-4, 3A-1 and 3B-2 expect A-GW-01 Active"
+      }
     }
   },
   "courseResources": {
