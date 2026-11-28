@@ -61,8 +61,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$EngineVersion = '1.6.0'
+$EngineVersion = '1.6.3'
 
+$GaiaTzOverride = @{}; $VyosTzOverride = @{}; $TzOverrideNote = ''; $VyosTzNote = ''
 # ---- settings file overrides the parameters --------------------------------------------------------------
 if ($SettingsFile) {
     $s = Get-Content -Raw -Path $SettingsFile | ConvertFrom-Json
@@ -81,6 +82,12 @@ if ($SettingsFile) {
             'vyosHosts'          { $VyosHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'vyosViaHosts'       { $VyosViaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
             'gaiaLateHosts'      { $LateGaiaHosts = @($p.Value | ForEach-Object { [string]$_ }) }
+            # Per-host time zones that must not follow the student's country (a lab step depends on them):
+            # { "<ip>": "Region / Zone" } for Gaia, { "<ip>": "Area/City" } for VyOS
+            'gaiaTimezoneOverrides' { foreach ($q in $p.Value.PSObject.Properties) { $GaiaTzOverride[[string]$q.Name] = [string]$q.Value } }
+            'vyosTimezoneOverrides' { foreach ($q in $p.Value.PSObject.Properties) { $VyosTzOverride[[string]$q.Name] = [string]$q.Value } }
+            'timezoneOverrideNote'  { $TzOverrideNote = [string]$p.Value }       # why the Gaia overrides exist
+            'vyosTimezoneOverrideNote' { $VyosTzNote = [string]$p.Value }       # why the VyOS overrides exist
             'extraLanguages'     { $ExtraLanguages = @($p.Value | ForEach-Object { [string]$_ }) }
             'password'           { $Password = [string]$p.Value }
             'domainUser'         { $DomainUser = [string]$p.Value }
@@ -704,7 +711,9 @@ if ($Mode -eq 'optimise') {
 } else {
     Write-Log "  Windows: language list $($Languages -join ', '); time zone '$WindowsTimezone'"
     Write-Log "  Gaia:    keyboard '$GaiaKeyboard'; time zone '$GaiaRegion / $GaiaZone'" + $(if ($NoReboot) { '  (no restarts)' } else { '' })
-    if ($LinuxHosts.Count -or $VyosHosts.Count -or $VyosViaHosts.Count) { Write-Log "  Linux/VyOS: time zone '$GaiaRegion/$GaiaZone' (Linux console keymap '$GaiaKeyboard'), no restarts" }
+    foreach ($k in $GaiaTzOverride.Keys) { Write-Log ("  Gaia $k keeps time zone '$($GaiaTzOverride[$k])'" + $(if ($TzOverrideNote) { " ($TzOverrideNote)" } else { '' })) }
+    foreach ($k in $VyosTzOverride.Keys) { Write-Log ("  VyOS $k keeps time zone '$($VyosTzOverride[$k])'" + $(if ($VyosTzNote) { " ($VyosTzNote)" } else { '' })) }
+    if ($LinuxHosts.Count -or $VyosHosts.Count -or $VyosViaHosts.Count) { Write-Log "  Linux/VyOS: time zone '$GaiaRegion/$GaiaZone' (console keyboard '$GaiaKeyboard'), no restarts" }
 }
 Set-Status 'running' 'Starting'
 
@@ -761,8 +770,11 @@ try {
     if (-not (Test-Path $PlinkPath)) { $LateGaiaHosts = @() }
     $startGaia = {
         param([string]$ip, [string[]]$doneNames, [bool]$late)
+        # A host with a time zone override keeps that zone (the keyboard and everything else still follow the choice)
+        $lines = [string[]]$gaiaLines
+        if ($GaiaTzOverride.ContainsKey($ip)) { $lines = [string[]]@($gaiaLines | ForEach-Object { if ($_ -like "clish -c 'set timezone *") { "clish -c 'set timezone $($GaiaTzOverride[$ip])'" } else { $_ } }) }
         $ps = [powershell]::Create(); $ps.RunspacePool = $pool
-        [void]$ps.AddScript($GaiaWorker).AddArgument($ip).AddArgument($Password).AddArgument($PlinkPath).AddArgument([string[]]$gaiaLines).AddArgument([string[]]$doneNames).AddArgument($late)
+        [void]$ps.AddScript($GaiaWorker).AddArgument($ip).AddArgument($Password).AddArgument($PlinkPath).AddArgument($lines).AddArgument([string[]]$doneNames).AddArgument($late)
         $script:HostResults["gaia:$ip"] = [pscustomobject]@{ ip = $ip; kind = 'Gaia'; name = ''; ok = $false; result = 'working' }
         [pscustomobject]@{ Key = "gaia:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false; Late = $late }
     }
@@ -771,9 +783,36 @@ try {
     # Linux servers and VyOS routers: time zone only (+ Linux console keymap); never restarted
     if (-not (Test-Path $PlinkPath)) { $LinuxHosts = @(); $VyosHosts = @(); $VyosViaHosts = @() }
     $ianaTz = "$GaiaRegion/$GaiaZone" -replace '\s', ''
-    $linuxCmd = "echo LSNAME_`$(hostname -s); timedatectl set-timezone $ianaTz || exit 1; localectl set-keymap $GaiaKeyboard 2>/dev/null || echo LSWARN_keymap_not_changed; echo LSDONE"
+    # Linux: systemd hosts (A-DMZ, CentOS) use timedatectl/localectl; Alpine (e.g. a Border-Router replaced by Router2Alpine)
+    # has neither, so the time zone is linked from tzdata and the console keymap set the way setup-keymap does
+    # (needs the kbd-bkeymaps package; without it the keymap is left and logged).
+    $alpKbMap = @{ 'uk' = 'gb/gb'; 'us' = 'us/us'; 'de' = 'de/de'; 'fr' = 'fr/fr'; 'fr_CH' = 'ch/ch-fr'; 'sg' = 'ch/ch'; 'dk' = 'dk/dk'
+                   'es' = 'es/es'; 'fi' = 'fi/fi'; 'it' = 'it/it'; 'no' = 'no/no'; 'pl' = 'pl/pl'; 'pt-latin1' = 'pt/pt'
+                   'ru' = 'ru/ru'; 'se-latin1' = 'se/se'; 'trq' = 'tr/tr' }
+    $alpKb = $(if ($alpKbMap.ContainsKey($GaiaKeyboard)) { $alpKbMap[$GaiaKeyboard] } else { "$GaiaKeyboard/$GaiaKeyboard" })
+    $alpKbFile = ($alpKb -split '/')[1]
+    $linuxCmd = "echo LSNAME_`$(hostname -s); " +
+        "if command -v timedatectl >/dev/null 2>&1; then timedatectl set-timezone $ianaTz || exit 1; " +
+        "elif [ -f /usr/share/zoneinfo/$ianaTz ]; then ln -sf /usr/share/zoneinfo/$ianaTz /etc/localtime && echo $ianaTz > /etc/timezone || exit 1; else echo LSWARN_no_tzdata; exit 1; fi; " +
+        "if command -v localectl >/dev/null 2>&1; then localectl set-keymap $GaiaKeyboard 2>/dev/null || echo LSWARN_keymap_not_changed; " +
+        "elif [ -f /usr/share/bkeymaps/$alpKb.bmap.gz ]; then mkdir -p /etc/keymap && cp /usr/share/bkeymaps/$alpKb.bmap.gz /etc/keymap/ && " +
+        "sed -i 's|^#*KEYMAP=.*|KEYMAP=/etc/keymap/$alpKbFile.bmap.gz|' /etc/conf.d/loadkmap && (rc-update add loadkmap boot >/dev/null 2>&1; rc-service loadkmap restart >/dev/null 2>&1; true); " +
+        "else echo LSWARN_keymap_not_installed_kbd-bkeymaps; fi; echo LSDONE"
     # VyOS only runs config commands from a script file (not vbash -c): write one, run it, remove it
-    $vyosCmd = "echo LSNAME_`$(cat /etc/hostname); printf '%s\n' '#!/bin/vbash' 'source /opt/vyatta/etc/functions/script-template' 'configure' 'set system time-zone $ianaTz' 'commit' 'save' 'exit' > /tmp/lstz.sh; /bin/vbash /tmp/lstz.sh; rc=`$?; rm -f /tmp/lstz.sh; [ `$rc -eq 0 ] && echo LSDONE"
+    # VyOS console keyboard (system option keyboard-layout): the student's layout where VyOS has it. Set in its own
+    # commit after the time zone, so a layout VyOS does not offer only gives a warning and never blocks the time zone.
+    # Layouts VyOS 2026.03 offers (system/option/keyboard-layout): us uk fr de es fi it jp106 no dk se-latin1 dvorak.
+    # Others (Swiss, Polish, Portuguese, Turkish, Russian, ...) are not guessed: the router keyboard is left and logged.
+    $vyKbOk = @('us', 'uk', 'fr', 'de', 'es', 'fi', 'it', 'no', 'dk', 'se-latin1')
+    $vyKb = $(if ($vyKbOk -contains $GaiaKeyboard) { $GaiaKeyboard } else { '' })
+    function Get-VyosCmd([string]$Tz) {
+        "echo LSNAME_`$(cat /etc/hostname); " +
+        "printf '%s\n' '#!/bin/vbash' 'source /opt/vyatta/etc/functions/script-template' 'configure' 'set system time-zone $Tz' 'commit' 'save' 'exit' > /tmp/lstz.sh; /bin/vbash /tmp/lstz.sh; rc=`$?; rm -f /tmp/lstz.sh; " +
+        $(if ($vyKb) { "printf '%s\n' '#!/bin/vbash' 'source /opt/vyatta/etc/functions/script-template' 'configure' 'set system option keyboard-layout $vyKb || exit 3' 'commit || exit 3' 'save' 'exit discard' > /tmp/lskb.sh; /bin/vbash /tmp/lskb.sh >/dev/null 2>&1 || echo LSWARN_keyboard_${vyKb}_not_set; rm -f /tmp/lskb.sh; " }
+          else { "echo LSWARN_no_VyOS_keyboard_layout_for_$GaiaKeyboard; " }) +
+        "[ `$rc -eq 0 ] && echo LSDONE"
+    }
+    $vyosCmd = Get-VyosCmd $ianaTz
     foreach ($ip in $LinuxHosts) {
         $ps = [powershell]::Create(); $ps.RunspacePool = $pool
         [void]$ps.AddScript($SshWorker).AddArgument($ip).AddArgument($LinuxUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($linuxCmd).AddArgument('Linux')
@@ -782,7 +821,8 @@ try {
     }
     foreach ($ip in $VyosHosts) {
         $ps = [powershell]::Create(); $ps.RunspacePool = $pool
-        [void]$ps.AddScript($SshWorker).AddArgument($ip).AddArgument($VyosUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($vyosCmd).AddArgument('VyOS')
+        $cmd = $(if ($VyosTzOverride.ContainsKey($ip)) { Get-VyosCmd $VyosTzOverride[$ip] } else { $vyosCmd })
+        [void]$ps.AddScript($SshWorker).AddArgument($ip).AddArgument($VyosUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($cmd).AddArgument('VyOS')
         $jobs += [pscustomobject]@{ Key = "vyos:$ip"; Ip = $ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
         $script:HostResults["vyos:$ip"] = [pscustomobject]@{ ip = $ip; kind = 'VyOS'; name = ''; ok = $false; result = 'working' }
     }
@@ -790,7 +830,8 @@ try {
         $t, $v = ($pair -split '@', 2)
         if (-not $t -or -not $v) { continue }
         $ps = [powershell]::Create(); $ps.RunspacePool = $pool
-        [void]$ps.AddScript($ViaWorker).AddArgument($t).AddArgument($v).AddArgument([string[]]@($DomainUser, $LocalUser, '.\admin')).AddArgument($VyosUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($vyosCmd).AddArgument($SshWorker.ToString())
+        $cmd = $(if ($VyosTzOverride.ContainsKey($t)) { Get-VyosCmd $VyosTzOverride[$t] } else { $vyosCmd })
+        [void]$ps.AddScript($ViaWorker).AddArgument($t).AddArgument($v).AddArgument([string[]]@($DomainUser, $LocalUser, '.\admin')).AddArgument($VyosUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($cmd).AddArgument($SshWorker.ToString())
         $jobs += [pscustomobject]@{ Key = "vyos:$t"; Ip = $t; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
         $script:HostResults["vyos:$t"] = [pscustomobject]@{ ip = $t; kind = 'VyOS'; name = ''; ok = $false; result = 'working' }
     }
@@ -809,8 +850,20 @@ try {
             $j.Done = $true
             try { $r = @($j.PS.EndInvoke($j.Handle))[0] } catch { $r = [pscustomobject]@{ ip = $j.Ip; kind = '?'; ok = $false; result = 'failed: ' + $_.Exception.Message } }
             $j.PS.Dispose()
+            if ($j.Key -like 'gaia:*' -and "$($r.result)" -eq 'failed: login refused' -and -not $script:HostResults.Contains("linux:$($j.Ip)") -and (Test-Path $PlinkPath)) {
+                Write-Log ("{0,-8} {1}: Gaia login refused - trying it as a Linux router (root)" -f 'Gaia', $j.Ip)
+                $script:HostResults.Remove($j.Key)
+                $ps = [powershell]::Create(); $ps.RunspacePool = $pool
+                [void]$ps.AddScript($SshWorker).AddArgument($j.Ip).AddArgument($LinuxUser).AddArgument($Password).AddArgument($PlinkPath).AddArgument($linuxCmd).AddArgument('Linux')
+                $jobs += [pscustomobject]@{ Key = "linux:$($j.Ip)"; Ip = $j.Ip; PS = $ps; Handle = $ps.BeginInvoke(); Done = $false }
+                $script:HostResults["linux:$($j.Ip)"] = [pscustomobject]@{ ip = $j.Ip; kind = 'Linux'; name = ''; ok = $false; result = 'working' }
+                continue
+            }
             $script:HostResults[$j.Key] = $r
             $who = $(if ($r.name) { "$($r.name) ($($r.ip))" } else { $r.ip })
+            $kept = $(if ($j.Key -like 'gaia:*') { $GaiaTzOverride[$j.Ip] } elseif ($j.Key -like 'vyos:*') { $VyosTzOverride[$j.Ip] } else { $null })
+            $note = $(if ($j.Key -like 'vyos:*') { $VyosTzNote } else { $TzOverrideNote })
+            if ($kept -and $r.ok) { $r.result = "$($r.result); time zone kept at $kept" + $(if ($note) { " ($note)" } else { '' }) }
             Write-Log ("{0,-8} {1}: {2}" -f $r.kind, $who, $r.result)
             if ($r.output) { Write-Log "         output: $($r.output)" }
             $done = @($jobs | Where-Object { $_.Done }).Count

@@ -1,5 +1,5 @@
 {
-  "version": 14,
+  "version": 16,
   "site": "https://caminoltd.github.io",
   "prepPage": "/lab-start/",
   "courses": [
@@ -893,6 +893,13 @@
         "command": "foreach ($id in 'PuTTY.PuTTY','WinSCP.WinSCP','Notepad++.Notepad++','7zip.7zip') { Write-Host \"== $id\" -ForegroundColor Cyan; winget upgrade --id $id -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity }",
         "note": "Runs as administrator. Needs internet and takes a few minutes. PuTTY 0.72 in the lab has a known key-recovery flaw (CVE-2024-31497), fixed from 0.81.",
         "elevated": true
+      },
+      {
+        "name": "Lab inventory (trainer)",
+        "desc": "For the trainer: finds every VM in this lab (read-only) and writes the exact VM list for content.json, so Localise and Optimise use the VMs this course really has.",
+        "command": "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Caminoltd/Lab-Start/main/lab-inventory.ps1)))",
+        "note": "Read-only, changes nothing. Takes 1-3 minutes. Start any switched-off VMs first. The result is also copied to the clipboard.",
+        "elevated": false
       }
     ],
     "CTPS": [
@@ -1195,7 +1202,18 @@
       ],
       "vyosVia": [
         "192.168.31.1@192.168.130.201"
-      ]
+      ],
+      "gaiaTimezoneOverrides": {
+        "198.51.100.1": "Canada / Newfoundland"
+      },
+      "vyosTimezoneOverrides": {
+        "192.168.11.254": "America/Chicago",
+        "192.168.21.254": "America/St_Johns",
+        "192.168.31.254": "Europe/Vienna",
+        "192.168.31.1": "Europe/Vienna"
+      },
+      "timezoneOverrideNote": "CPVS Lab 7A",
+      "vyosTimezoneOverrideNote": "CPVS Lab Setup Guide"
     }
   },
   "courseResources": {

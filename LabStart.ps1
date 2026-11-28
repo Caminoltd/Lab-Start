@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
         Import-Module $m -ErrorAction SilentlyContinue
     }
 }
-$Version         = '0.9.3'
+$Version         = '0.9.5'
 $RepoRaw         = 'https://raw.githubusercontent.com/Caminoltd/Lab-Start/' + $(if ($Ref) { $Ref } else { 'main' })
 $RdpHostName     = 'RDP-HOST'
 $RdpHostFallback = '10.1.1.230'
@@ -439,6 +439,11 @@ $btnStatus.Add_Click({ Show-LocaliseStatus })
 
 # Localise and Optimise act on the chosen course's lab VMs (host lists and SmartConsole keep list differ per
 # course), so neither runs until a course is chosen. Returns the course code, or $null after telling the student.
+# True when content.json has this course's own VM list (from lab-inventory.ps1); otherwise the engine's standard list is used
+function Test-CourseHostList([string]$Code) {
+    return [bool]($Content.localiseHosts -and $Code -and $Content.localiseHosts.PSObject.Properties[$Code])
+}
+$NoHostListNote = "`r`n`r`nNote: there is no VM list for this course yet, so the standard lab layout is used. VMs it does not find are skipped."
 function Confirm-CourseChosen([string]$Action) {
     $code = Get-SelectedCourse
     if ($code) { return $code }
@@ -458,6 +463,17 @@ $btnApply.Add_Click({
     if ($noRestart) { $msg += "No VM restarts. The time zones change at once; on RDP-HOST the new keyboard applies at your next log-on.`r`n`r`nContinue?" }
     else { $msg += "About a minute after it starts, the Windows VMs restart - including this one (A-GUI). Save anything you have open first.`r`n`r`n" +
            "Lab Start opens again by itself when you log back in to A-GUI, and shows the result.`r`n`r`nContinue?" }
+    if (-not (Test-CourseHostList $course)) { $msg = $msg -replace "`r`n`r`nContinue\?$", ($NoHostListNote + "`r`n`r`nContinue?") }
+    else {
+        $lhc = $Content.localiseHosts.PSObject.Properties[$course].Value
+        $keepTz = @(@($lhc.gaiaTimezoneOverrides) | Where-Object { $_ } | ForEach-Object { $_.PSObject.Properties } | ForEach-Object {
+            $ip = $_.Name; $nm = @(@(Get-CourseValue $Content.gaiaHosts $course) | Where-Object { $_.ip -eq $ip } | ForEach-Object { $_.name }) | Select-Object -First 1
+            $(if ($nm) { "$nm ($ip)" } else { $ip }) + ": $($_.Value)" })
+        if ($keepTz) {
+            $why = $(if ($lhc.timezoneOverrideNote) { " (needed for $($lhc.timezoneOverrideNote))" } else { '' })
+            $msg = $msg -replace "`r`n`r`nContinue\?$", ("`r`n`r`nThese VMs keep the time zone your lab guide expects${why}:`r`n  " + ($keepTz -join "`r`n  ") + "`r`n`r`nContinue?")
+        }
+    }
     $ans = [System.Windows.Forms.MessageBox]::Show($msg, 'Apply keyboard and timezone', 'YesNo', 'Warning')
     if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
     Set-Busy $true
@@ -477,9 +493,15 @@ $btnApply.Add_Click({
             if (-not $lh) { $pp = $Content.localiseHosts.PSObject.Properties['default']; if ($pp) { $lh = $pp.Value } }
             if ($lh -and $lh.windows) { $cfg.windowsHosts = @($lh.windows) }
             if ($lh -and $lh.gaia) { $cfg.gaiaHosts = @($lh.gaia) }
+            if ($lh -and $lh.gaiaLate) { $cfg.gaiaLateHosts = @($lh.gaiaLate) }
             if ($lh -and $lh.linux) { $cfg.linuxHosts = @($lh.linux) }
             if ($lh -and $lh.vyos) { $cfg.vyosHosts = @($lh.vyos) }
             if ($lh -and $lh.vyosVia) { $cfg.vyosViaHosts = @($lh.vyosVia) }
+            # hosts that keep the time zone a lab step depends on, whatever country is chosen
+            if ($lh -and $lh.gaiaTimezoneOverrides) { $cfg.gaiaTimezoneOverrides = $lh.gaiaTimezoneOverrides }
+            if ($lh -and $lh.vyosTimezoneOverrides) { $cfg.vyosTimezoneOverrides = $lh.vyosTimezoneOverrides }
+            if ($lh -and $lh.timezoneOverrideNote) { $cfg.timezoneOverrideNote = [string]$lh.timezoneOverrideNote }
+            if ($lh -and $lh.vyosTimezoneOverrideNote) { $cfg.vyosTimezoneOverrideNote = [string]$lh.vyosTimezoneOverrideNote }
         }
         $settingsJson = ConvertTo-Json -InputObject ([pscustomobject]$cfg) -Depth 4
         $engine = Get-LocaliseEngine
@@ -530,6 +552,7 @@ $btnOptimise.Add_Click({
            "- switches off background tasks (incl. weekly disk optimisation), hibernation, error reporting and, on servers, Print Spooler`r`n" +
            "- sets visual effects to best performance for every user`r`n`r`n" +
            "Close any old SmartConsole that is open. It takes a few minutes.`r`n`r`nContinue?"
+    if (-not (Test-CourseHostList $code)) { $msg = $msg -replace "`r`n`r`nContinue\?$", ($NoHostListNote + "`r`n`r`nContinue?") }
     if ([System.Windows.Forms.MessageBox]::Show($msg, 'Optimise lab VMs', 'YesNo', 'Question') -ne [System.Windows.Forms.DialogResult]::Yes) { return }
     Set-Busy $true
     try {
